@@ -76,7 +76,7 @@ COPY requirements.txt .
 # Install Python dependencies with optimizations - split into smaller chunks for better error handling
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     echo "Installing base dependencies..." && \
-    pip install --no-cache-dir --verbose numpy==1.24.3 pandas==2.2.3 psutil==5.9.8 python-dotenv==1.0.0 selenium==4.28.1 webdriver-manager==4.0.2 undetected-chromedriver==3.5.5 && \
+    pip install --no-cache-dir --verbose numpy==1.24.3 pandas==2.2.3 psutil==5.9.8 python-dotenv==1.0.0 selenium==4.28.1 webdriver-manager==4.0.2 undetected-chromedriver==3.5.5 openai==1.3.5 && \
     echo "Installing OpenCV..." && \
     pip install --no-cache-dir --verbose opencv-python-headless==4.11.0.86 && \
     echo "Installing core ML dependencies..." && \
