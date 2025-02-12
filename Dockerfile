@@ -51,8 +51,12 @@ RUN apt-get update && \
     libjpeg-dev \
     libpng-dev \
     libtiff-dev \
-    # Additional dependencies for yt-dlp
+    # Additional dependencies for Python packages
     python3-pip \
+    python3-setuptools \
+    python3-wheel \
+    gcc \
+    g++ \
     # Cleanup
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -70,10 +74,13 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies with optimizations
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    # Install latest yt-dlp directly
-    pip install --no-cache-dir --upgrade yt-dlp && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    # Install numpy and other basic dependencies first
+    pip install --no-cache-dir --verbose numpy pandas opencv-python-headless && \
+    # Install the rest of the requirements
+    pip install --no-cache-dir --verbose -r requirements.txt && \
+    # Install yt-dlp separately
+    pip install --no-cache-dir --verbose yt-dlp && \
     # Clean up pip cache
     rm -rf /root/.cache/pip/* && \
     # Pre-compile Python files
