@@ -53,9 +53,6 @@ RUN apt-get update && \
     libtiff-dev \
     # Additional dependencies for yt-dlp
     python3-pip \
-    aria2 \
-    atomicparsley \
-    rtmpdump \
     # Cleanup
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
