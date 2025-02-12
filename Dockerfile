@@ -86,7 +86,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     echo "Installing Google Cloud dependencies..." && \
     pip install --no-cache-dir --verbose google-cloud-vision==3.9.0 google-cloud-texttospeech==2.14.1 && \
     echo "Installing Telegram dependencies..." && \
-    pip install --no-cache-dir --verbose telegram==0.0.1 telegram-bot-api==0.0.1 python-telegram-bot==20.7 && \
+    pip install --no-cache-dir --verbose "python-telegram-bot[job-queue]==20.7" && \
     echo "Installing remaining requirements..." && \
     pip install --no-cache-dir --verbose -r requirements.txt 2>&1 | tee pip_install.log && \
     echo "Installing yt-dlp..." && \
