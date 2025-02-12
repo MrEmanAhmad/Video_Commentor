@@ -73,13 +73,21 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies with optimizations
+# Install Python dependencies with optimizations - split into smaller chunks for better error handling
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    # Install numpy and other basic dependencies first
-    pip install --no-cache-dir --verbose numpy pandas opencv-python-headless && \
-    # Install the rest of the requirements
-    pip install --no-cache-dir --verbose -r requirements.txt && \
-    # Install yt-dlp separately
+    echo "Installing base dependencies..." && \
+    pip install --no-cache-dir --verbose numpy==1.24.3 pandas==2.2.3 && \
+    echo "Installing OpenCV..." && \
+    pip install --no-cache-dir --verbose opencv-python-headless==4.11.0.86 && \
+    echo "Installing core ML dependencies..." && \
+    pip install --no-cache-dir --verbose scikit-image==0.25.1 scipy==1.15.1 && \
+    echo "Installing web dependencies..." && \
+    pip install --no-cache-dir --verbose streamlit==1.31.0 fastapi==0.115.8 uvicorn==0.34.0 && \
+    echo "Installing Google Cloud dependencies..." && \
+    pip install --no-cache-dir --verbose google-cloud-vision==3.9.0 google-cloud-texttospeech==2.14.1 && \
+    echo "Installing remaining requirements..." && \
+    pip install --no-cache-dir --verbose -r requirements.txt 2>&1 | tee pip_install.log && \
+    echo "Installing yt-dlp..." && \
     pip install --no-cache-dir --verbose yt-dlp && \
     # Clean up pip cache
     rm -rf /root/.cache/pip/* && \
