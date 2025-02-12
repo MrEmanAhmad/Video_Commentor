@@ -115,6 +115,9 @@ RUN mkdir -p \
 # Copy Streamlit config
 COPY .streamlit/config.toml /home/app_user/.streamlit/config.toml
 
+# Copy sample generated videos
+COPY sample_generated_videos/*.mp4 /app/sample_generated_videos/
+
 # Copy the entire application
 COPY . .
 
