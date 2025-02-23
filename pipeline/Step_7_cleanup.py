@@ -1,89 +1,87 @@
 """
 Step 7: Cleanup module
-Performs thorough cleanup of all temporary files, directories and cloud resources
+Cleans up temporary files and directories
 """
 
-import logging
 import os
+import logging
 import shutil
 from pathlib import Path
-from typing import List, Optional, Union
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
+from typing import List
 
 logger = logging.getLogger(__name__)
 
-def cleanup_workspace(output_dir: Union[str, Path], keep_files: Optional[List[str]] = None) -> None:
-    """Clean up workspace completely, keeping no files by default."""
-    output_dir = Path(output_dir)
+def cleanup_temp_files(temp_dirs: List[Path]) -> None:
+    """
+    Clean up temporary directories and files.
     
-    try:
-        # Delete all files in the directory and subdirectories
-        for item in output_dir.glob("**/*"):
-            if item.is_file():
-                if keep_files and item.name in keep_files:
-                    continue
-                try:
-                    item.unlink()
-                    logger.info(f"Deleted file: {item}")
-                except Exception as e:
-                    logger.warning(f"Could not delete {item}: {e}")
-    
-        # Remove all empty directories
-        for item in sorted(output_dir.glob("**/*"), reverse=True):
-            if item.is_dir():
-                try:
-                    item.rmdir()
-                    logger.info(f"Removed directory: {item}")
-                except Exception as e:
-                    logger.warning(f"Could not remove directory {item}: {e}")
-                    
-        # Finally remove the output directory itself if empty
+    Args:
+        temp_dirs: List of temporary directory paths to clean up
+    """
+    for temp_dir in temp_dirs:
         try:
-            if not any(output_dir.iterdir()):
-                output_dir.rmdir()
-                logger.info(f"Removed empty output directory: {output_dir}")
+            if temp_dir.exists():
+                # Check if directory contains final video
+                final_videos = list(temp_dir.glob("final_video_*.mp4"))
+                if final_videos:
+                    logger.info(f"Skipping cleanup of {temp_dir} as it contains final video")
+                    continue
+                    
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up directory: {temp_dir}")
         except Exception as e:
-            logger.warning(f"Could not remove output directory {output_dir}: {e}")
-            
-    except Exception as e:
-        logger.error(f"Error during workspace cleanup: {e}")
+            logger.warning(f"Could not delete directory {temp_dir}: {e}")
 
-def cleanup_cloudinary_resources(prefix: str) -> None:
-    """Clean up all Cloudinary resources with the given prefix."""
+def cleanup_temp_files_with_pattern(pattern: str) -> None:
+    """
+    Clean up temporary files matching a pattern.
+    
+    Args:
+        pattern: Glob pattern to match files/directories
+    """
     try:
-        # Get all resources with the prefix
-        result = cloudinary.api.resources(type="upload", prefix=prefix)
-        for resource in result.get("resources", []):
+        for path in Path().glob(pattern):
             try:
-                cloudinary.uploader.destroy(resource["public_id"])
-                logger.info(f"Deleted Cloudinary resource: {resource['public_id']}")
+                # Skip if directory contains final video
+                if path.is_dir():
+                    final_videos = list(path.glob("final_video_*.mp4"))
+                    if final_videos:
+                        logger.info(f"Skipping cleanup of {path} as it contains final video")
+                        continue
+                        
+                if path.is_file():
+                    # Skip final videos
+                    if "final_video_" in path.name and path.suffix == ".mp4":
+                        logger.info(f"Skipping cleanup of final video: {path}")
+                        continue
+                    path.unlink()
+                    logger.info(f"Deleted file: {path}")
+                elif path.is_dir():
+                    shutil.rmtree(path)
+                    logger.info(f"Deleted directory: {path}")
             except Exception as e:
-                logger.warning(f"Could not delete Cloudinary resource {resource['public_id']}: {e}")
+                logger.warning(f"Could not delete {path}: {e}")
     except Exception as e:
-        logger.error(f"Error cleaning up Cloudinary resources: {e}")
+        logger.error(f"Error cleaning up pattern {pattern}: {e}")
 
-def execute_step(output_dir: Path, style_name: str, keep_files: Optional[List[str]] = None) -> None:
+def execute_step(temp_dirs: List[Path] = None) -> None:
     """
     Execute cleanup step.
     
     Args:
-        output_dir: Directory to clean up
-        style_name: Name of the commentary style used
-        keep_files: List of filenames to keep (optional)
+        temp_dirs: Optional list of temporary directories to clean up
     """
-    logger.info("Step 7: Starting thorough cleanup...")
+    logger.debug("Step 7: Cleaning up...")
     
     try:
-        # Clean up Cloudinary resources first
-        cleanup_cloudinary_resources(str(output_dir.name))
+        # Clean up specific temp directories if provided
+        if temp_dirs:
+            cleanup_temp_files(temp_dirs)
         
-        # Clean up local workspace
-        cleanup_workspace(output_dir, keep_files)
+        # Clean up any remaining temp files/directories
+        cleanup_temp_files_with_pattern("temp_*")
+        cleanup_temp_files_with_pattern("output_*")
         
         logger.info("Cleanup completed successfully")
-        
     except Exception as e:
-        logger.error(f"Error during cleanup step: {e}")
-        raise 
+        logger.error(f"Error during cleanup: {e}") 
