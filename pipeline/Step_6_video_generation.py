@@ -35,33 +35,36 @@ class VideoGenerator:
             
     def _ensure_directories(self, video_path: Path, output_path: Path):
         """Ensure all necessary directories exist."""
-        # Create temp video directory
         video_dir = video_path.parent
         video_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Ensured video directory exists: {video_dir}")
 
-        # Create output directory
         output_dir = output_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Ensured output directory exists: {output_dir}")
 
     def _verify_files_exist(self, video_path: str, audio_path: str) -> bool:
-        """Verify that input files exist."""
+        """Verify that input files exist and are valid."""
         video_exists = os.path.exists(video_path)
         audio_exists = os.path.exists(audio_path)
         
         logger.info(f"Video file exists: {video_exists} ({video_path})")
         logger.info(f"Audio file exists: {audio_exists} ({audio_path})")
         
-        # Add detailed file information
         if video_exists:
             video_size = os.path.getsize(video_path)
             logger.info(f"Video file size: {video_size} bytes")
+            if video_size == 0:
+                logger.error("Video file is empty")
+                return False
+        
         if audio_exists:
             audio_size = os.path.getsize(audio_path)
             logger.info(f"Audio file size: {audio_size} bytes")
+            if audio_size == 0:
+                logger.error("Audio file is empty")
+                return False
             
-        # Log absolute paths
         logger.info(f"Video absolute path: {os.path.abspath(video_path)}")
         logger.info(f"Audio absolute path: {os.path.abspath(audio_path)}")
         
@@ -78,7 +81,9 @@ class VideoGenerator:
                 audio_path
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return float(result.stdout.strip())
+            duration = float(result.stdout.strip())
+            logger.info(f"Audio duration: {duration} seconds")
+            return duration
         except Exception as e:
             logger.warning(f"Could not get audio duration: {e}")
             return 0.0
@@ -90,78 +95,62 @@ class VideoGenerator:
         output_path: Path,
         style_name: str = None
     ) -> Optional[Path]:
-        """
-        Generate final video with optimized processing.
-        
-        Args:
-            video_path: Path to the input video
-            audio_path: Path to the audio file
-            output_path: Path to save the final video
-            style_name: Name of the commentary style used
-            
-        Returns:
-            Path to generated video if successful, None otherwise
-        """
+        """Generate final video with optimized processing."""
         try:
-            # Convert paths to absolute paths
             video_path = str(Path(video_path).absolute())
             audio_path = str(Path(audio_path).absolute())
             output_path = Path(output_path).absolute()
             
-            # Ensure directories exist
             self._ensure_directories(Path(video_path), output_path)
             
-            # Verify input files exist
             if not self._verify_files_exist(video_path, audio_path):
-                raise FileNotFoundError("Input video or audio file not found")
+                raise FileNotFoundError("Input video or audio file not found or empty")
             
-            # Get commentary duration
             commentary_duration = self._get_audio_duration(audio_path)
             logger.info(f"Commentary duration: {commentary_duration} seconds")
             
-            # Build FFmpeg command with minimal complexity and resource usage
+            # Build FFmpeg command with improved error handling and robustness
             cmd = [
                 'ffmpeg',
-                '-y',  # Overwrite output file
+                '-y',  # Overwrite output
                 '-threads', '4',  # Limit threads
                 '-i', video_path,
                 '-i', audio_path,
                 '-filter_complex',
-                '[0:a]volume=1[original];'  # Original audio at full volume
-                '[1:a]volume=0.7[commentary];'  # Commentary slightly lower
-                f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'  # Duck during commentary
-                '[ducked][commentary]amix=inputs=2:duration=longest[audio]',  # Mix both audio streams
-                '-vf', f'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=white',
+                f'[0:a]volume=1[original];'
+                f'[1:a]volume=0.7[commentary];'
+                f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'
+                '[ducked][commentary]amix=inputs=2:duration=longest[audio]',
+                '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=white',
                 '-c:v', 'libx264',
-                '-preset', 'veryfast',  # Use faster preset
-                '-crf', '30',  # Slightly reduce quality for better performance
-                '-maxrate', '2M',  # Limit bitrate
+                '-preset', 'ultrafast',  # Use fastest preset for Railway
+                '-crf', '28',  # Slightly reduce quality for better performance
+                '-maxrate', '2M',
                 '-bufsize', '4M',
                 '-c:a', 'aac',
-                '-b:a', '128k',  # Reduce audio bitrate
-                '-ac', '2',  # Force stereo
-                '-ar', '44100',  # Standard audio sample rate
+                '-b:a', '192k',  # Increased audio bitrate for better quality
+                '-ac', '2',
+                '-ar', '44100',
                 '-map', '0:v',
                 '-map', '[audio]',
                 '-max_muxing_queue_size', '1024',
-                '-movflags', '+faststart',  # Enable fast start for web playback
+                '-movflags', '+faststart',
                 str(output_path)
             ]
             
-            # Log command and current directory
             logger.info(f"Current working directory: {os.getcwd()}")
             logger.info(f"FFmpeg command: {' '.join(cmd)}")
             
-            # Run FFmpeg with stderr capture and timeout
+            # Run FFmpeg with improved error handling
             try:
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    universal_newlines=True
+                    universal_newlines=True,
+                    bufsize=1
                 )
                 
-                # Add timeout of 5 minutes
                 try:
                     stdout, stderr = process.communicate(timeout=300)
                     if process.returncode == 0:
@@ -170,6 +159,8 @@ class VideoGenerator:
                             return output_path
                         else:
                             logger.error("Output file is empty or does not exist")
+                            if stderr:
+                                logger.error(f"FFmpeg stderr: {stderr}")
                             return None
                     else:
                         logger.error(f"FFmpeg error: {stderr}")
@@ -196,33 +187,18 @@ async def execute_step(
     output_dir: Path,
     style_name: str
 ) -> Optional[Path]:
-    """
-    Execute video generation step.
-    
-    Args:
-        video_file: Path to the input video file
-        audio_file: Path to the generated audio file
-        output_dir: Directory to save generated video
-        style_name: Name of the commentary style used
-        
-    Returns:
-        Path to the generated video if successful, None otherwise
-    """
+    """Execute video generation step."""
     logger.debug("Step 6: Generating final video...")
     
     try:
-        # Ensure output directory exists
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Ensured output directory exists: {output_dir}")
         
-        # Log input file paths
         logger.info(f"Input video file: {video_file} (exists: {video_file.exists()})")
         logger.info(f"Input audio file: {audio_file} (exists: {audio_file.exists()})")
         
-        # Initialize video generator
         generator = VideoGenerator()
         
-        # Generate final video
         output_file = output_dir / f"final_video_{style_name}.mp4"
         result = await generator.generate_video(
             str(video_file),
