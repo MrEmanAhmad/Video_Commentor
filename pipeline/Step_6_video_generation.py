@@ -119,10 +119,11 @@ class VideoGenerator:
             commentary_duration = self._get_audio_duration(audio_path)
             logger.info(f"Commentary duration: {commentary_duration} seconds")
             
-            # Build FFmpeg command with minimal complexity
+            # Build FFmpeg command with minimal complexity and resource usage
             cmd = [
                 'ffmpeg',
-                '-y',
+                '-y',  # Overwrite output file
+                '-threads', '4',  # Limit threads
                 '-i', video_path,
                 '-i', audio_path,
                 '-filter_complex',
@@ -130,15 +131,20 @@ class VideoGenerator:
                 '[1:a]volume=0.7[commentary];'  # Commentary slightly lower
                 f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'  # Duck during commentary
                 '[ducked][commentary]amix=inputs=2:duration=longest[audio]',  # Mix both audio streams
-                '-vf', 'pad=720:1280:0:0:color=white',
+                '-vf', f'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=white',
                 '-c:v', 'libx264',
-                '-preset', 'ultrafast',
-                '-crf', '28',
+                '-preset', 'veryfast',  # Use faster preset
+                '-crf', '30',  # Slightly reduce quality for better performance
+                '-maxrate', '2M',  # Limit bitrate
+                '-bufsize', '4M',
                 '-c:a', 'aac',
-                '-b:a', '192k',
+                '-b:a', '128k',  # Reduce audio bitrate
+                '-ac', '2',  # Force stereo
+                '-ar', '44100',  # Standard audio sample rate
                 '-map', '0:v',
                 '-map', '[audio]',
                 '-max_muxing_queue_size', '1024',
+                '-movflags', '+faststart',  # Enable fast start for web playback
                 str(output_path)
             ]
             
@@ -146,20 +152,31 @@ class VideoGenerator:
             logger.info(f"Current working directory: {os.getcwd()}")
             logger.info(f"FFmpeg command: {' '.join(cmd)}")
             
-            # Run FFmpeg with stderr capture
+            # Run FFmpeg with stderr capture and timeout
             try:
-                result = subprocess.run(
+                process = subprocess.Popen(
                     cmd,
-                    capture_output=True,
-                    text=True,
-                    check=True
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True
                 )
                 
-                if result.returncode == 0:
-                    logger.info(f"Video generated successfully: {output_path}")
-                    return output_path
-                else:
-                    logger.error(f"FFmpeg error: {result.stderr}")
+                # Add timeout of 5 minutes
+                try:
+                    stdout, stderr = process.communicate(timeout=300)
+                    if process.returncode == 0:
+                        if os.path.exists(str(output_path)) and os.path.getsize(str(output_path)) > 0:
+                            logger.info(f"Video generated successfully: {output_path}")
+                            return output_path
+                        else:
+                            logger.error("Output file is empty or does not exist")
+                            return None
+                    else:
+                        logger.error(f"FFmpeg error: {stderr}")
+                        return None
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    logger.error("FFmpeg process timed out after 5 minutes")
                     return None
                     
             except subprocess.CalledProcessError as e:
