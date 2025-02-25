@@ -109,31 +109,58 @@ class VideoGenerator:
             commentary_duration = self._get_audio_duration(audio_path)
             logger.info(f"Commentary duration: {commentary_duration} seconds")
             
-            # Build FFmpeg command with improved error handling and robustness
+            # Get video dimensions
+            probe_cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height',
+                '-of', 'json',
+                video_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            video_info = json.loads(probe_result.stdout)
+            original_width = int(video_info['streams'][0]['width'])
+            original_height = int(video_info['streams'][0]['height'])
+            
+            # Calculate padding while maintaining aspect ratio
+            target_width = 720
+            target_height = 1280
+            scale_width = target_width
+            scale_height = int(original_height * (target_width / original_width))
+            
+            if scale_height > target_height:
+                scale_height = target_height
+                scale_width = int(original_width * (target_height / original_height))
+            
+            # Calculate padding
+            pad_x = (target_width - scale_width) // 2
+            pad_y = (target_height - scale_height) // 2
+            
+            # Build FFmpeg command with improved stability
             cmd = [
                 'ffmpeg',
                 '-y',  # Overwrite output
-                '-threads', '4',  # Limit threads
                 '-i', video_path,
                 '-i', audio_path,
                 '-filter_complex',
+                f'[0:v]scale={scale_width}:{scale_height}:flags=lanczos,pad={target_width}:{target_height}:{pad_x}:{pad_y}:color=white[v];'
                 f'[0:a]volume=1[original];'
                 f'[1:a]volume=0.7[commentary];'
                 f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'
                 '[ducked][commentary]amix=inputs=2:duration=longest[audio]',
-                '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=white',
+                '-map', '[v]',
+                '-map', '[audio]',
                 '-c:v', 'libx264',
-                '-preset', 'ultrafast',  # Use fastest preset for Railway
-                '-crf', '28',  # Slightly reduce quality for better performance
-                '-maxrate', '2M',
-                '-bufsize', '4M',
+                '-preset', 'medium',  # Balance between speed and quality
+                '-crf', '23',  # Maintain high quality
+                '-maxrate', '4M',  # Allow higher bitrate for quality
+                '-bufsize', '8M',
                 '-c:a', 'aac',
-                '-b:a', '192k',  # Increased audio bitrate for better quality
+                '-b:a', '192k',  # Good audio quality
                 '-ac', '2',
                 '-ar', '44100',
-                '-map', '0:v',
-                '-map', '[audio]',
-                '-max_muxing_queue_size', '1024',
+                '-max_muxing_queue_size', '2048',  # Increased queue size
                 '-movflags', '+faststart',
                 str(output_path)
             ]
@@ -152,7 +179,7 @@ class VideoGenerator:
                 )
                 
                 try:
-                    stdout, stderr = process.communicate(timeout=300)
+                    stdout, stderr = process.communicate(timeout=600)  # Increased timeout to 10 minutes
                     if process.returncode == 0:
                         if os.path.exists(str(output_path)) and os.path.getsize(str(output_path)) > 0:
                             logger.info(f"Video generated successfully: {output_path}")
@@ -167,7 +194,7 @@ class VideoGenerator:
                         return None
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    logger.error("FFmpeg process timed out after 5 minutes")
+                    logger.error("FFmpeg process timed out after 10 minutes")
                     return None
                     
             except subprocess.CalledProcessError as e:
