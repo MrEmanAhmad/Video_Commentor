@@ -1,0 +1,221 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Qwen Integration Implementation Plan
+
+## Overview
+
+This rule outlines the implementation plan for integrating Qwen as the default image analysis and commentary generation engine, using OpenAI **exclusively for non-English language translation**.
+
+## Key Files to Modify
+
+1. **LLM Provider Definition**: [prompts.py](mdc:pipeline/prompts.py)
+   - Add Qwen as a new provider in the `LLMProvider` enum
+   - Implement Qwen client setup in `PromptManager._setup_client()`
+
+2. **Image Analysis Integration**: [Step_3_analyze_frames.py](mdc:pipeline/Step_3_analyze_frames.py)
+   - Modify `VisionAnalyzer` to use Qwen for image analysis
+   - Implement provider selection logic based on language
+
+3. **Commentary Generation**: [Step_4_generate_commentary.py](mdc:pipeline/Step_4_generate_commentary.py)
+   - Use Qwen for English commentary generation
+   - Add translation handling for non-English output (using OpenAI only for translation)
+
+## API Integration Details
+
+### Qwen API Integration (OpenAI-Compatible Method)
+
+```python
+import os
+from openai import OpenAI
+
+# Initialize the client with DashScope API
+client = OpenAI(
+    api_key=os.getenv("DASHSCOPE_API_KEY"),
+    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+)
+
+# For text-only generation
+completion = client.chat.completions.create(
+    model="qwen-plus",  # For text-only
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Generate a commentary for this video."}
+    ],
+    temperature=0.7
+)
+
+# For vision analysis
+vision_completion = client.chat.completions.create(
+    model="qwen-vl-plus",  # For vision capabilities
+    messages=[{"role": "user", "content": [
+        {"type": "text", "text": "Describe this image in detail."},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64_image}}
+    ]}]
+)
+```
+
+### Qwen API Integration (DashScope Method)
+
+```python
+import os
+import dashscope
+
+# Set the base URL for international API access
+dashscope.base_http_api_url = 'https://dashscope-intl.aliyuncs.com/api/v1'
+
+# Text generation example
+text_response = dashscope.Generation.call(
+    api_key=os.getenv('DASHSCOPE_API_KEY'),
+    model="qwen-plus",
+    messages=[
+        {'role': 'system', 'content': 'You are a commentary generator.'},
+        {'role': 'user', 'content': 'Generate commentary for this video about nature.'}
+    ],
+    result_format='message'
+)
+
+# Vision analysis example
+from dashscope import MultiModalConversation
+multimodal_messages = [{'role': 'user', 'content': [
+    {'text': 'Describe this image in detail.'},
+    {'image': base64_image}
+]}]
+
+vision_response = MultiModalConversation.call(
+    api_key=os.getenv('DASHSCOPE_API_KEY'),
+    model='qwen-vl-plus',
+    messages=multimodal_messages
+)
+```
+
+## Implementation Details
+
+### Add Qwen Provider
+
+```python
+class LLMProvider(Enum):
+    """Available LLM providers."""
+    OPENAI = "openai"
+    DEEPSEEK = "deepseek"
+    QWEN = "qwen"  # Add Qwen as a provider
+```
+
+### Provider Selection Logic
+
+```python
+def _select_provider(self, language: str = 'en') -> LLMProvider:
+    """Select appropriate provider based on language and configuration."""
+    if language == 'en':
+        return LLMProvider.QWEN  # Default to Qwen for English
+    else:
+        return LLMProvider.OPENAI  # Use OpenAI only for translation to other languages
+```
+
+### Client Setup Method
+
+```python
+def _setup_client(self):
+    """Setup the appropriate client based on provider."""
+    try:
+        if self.provider == LLMProvider.OPENAI:
+            self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        elif self.provider == LLMProvider.DEEPSEEK:
+            self.client = OpenAI(
+                api_key=os.getenv('DEEPSEEK_API_KEY'),
+                base_url="https://api.deepseek.com/v1"
+            )
+        elif self.provider == LLMProvider.QWEN:
+            # Using OpenAI-compatible interface for Qwen
+            self.client = OpenAI(
+                api_key=os.getenv('DASHSCOPE_API_KEY'),
+                base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            )
+    except Exception as e:
+        logger.error(f"Error setting up {self.provider.value} client: {str(e)}")
+        raise
+```
+
+### Qwen Vision Method
+
+```python
+async def analyze_frame_qwen(self, frame_path: Path, google_analysis: Optional[dict] = None) -> Tuple[Optional[dict], bool]:
+    """
+    Analyze a frame using Qwen Vision API.
+    Provides detailed scene understanding.
+    """
+    try:
+        with open(frame_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Convert google_analysis to ensure it's JSON serializable
+        if google_analysis:
+            google_analysis = convert_numpy_floats(google_analysis)
+        
+        # Using OpenAI-compatible interface
+        client = OpenAI(
+            api_key=os.getenv('DASHSCOPE_API_KEY'),
+            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        )
+        
+        response = client.chat.completions.create(
+            model="qwen-vl-plus",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": self._build_qwen_prompt(google_analysis)},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}",
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=300,
+        )
+        
+        return {"detailed_description": response.choices[0].message.content}, True
+    except Exception as e:
+        logger.error(f"Qwen Vision API error: {str(e)}")
+        return None, False
+```
+
+### Translation Handling with OpenAI
+
+```python
+async def translate_with_openai(text: str, target_language: str) -> str:
+    """
+    Translate text to target language using OpenAI.
+    This is the ONLY use of OpenAI in the pipeline.
+    """
+    try:
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Smaller, efficient model for translation
+            messages=[
+                {"role": "system", "content": f"You are a professional translator to {target_language}."},
+                {"role": "user", "content": f"Translate this text to {target_language}, preserving style and tone:\n\n{text}"}
+            ],
+            temperature=0.3  # Lower temperature for more consistent translations
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"OpenAI translation error: {str(e)}")
+        return text  # Return original text if translation fails
+```
+
+### Implementation Flow for Non-English Commentary
+
+For non-English commentary, the pipeline will:
+1. Generate English commentary with Qwen
+2. Use OpenAI exclusively for translating the English commentary to the target language
+3. Apply language-specific formatting to the translated text
+
+
+
+
