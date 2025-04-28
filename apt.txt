@@ -1,0 +1,9 @@
+ffmpeg
+python3-opencv
+tesseract-ocr
+libgl1-mesa-glx
+libsm6
+libxext6
+libxrender-dev
+libfontconfig1
+fonts-liberation 

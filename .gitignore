@@ -30,6 +30,7 @@ ENV/
 .vscode/
 *.swp
 *.swo
+.cursor/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -37,6 +38,7 @@ ENV/
 # Video Commentary Bot specific
 output/
 google_credentials.json
+railway.json
 .env
 .secrets
 video_commentary_bot.log
