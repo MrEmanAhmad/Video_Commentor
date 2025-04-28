@@ -19,7 +19,10 @@ nixPkgs = [
   'dbus',
   'gobject-introspection',
   'gnome.zenity',
-  'firefox'
+  'firefox',
+  'mesa',              # OpenGL implementation
+  'libglvnd',          # GL vendor-neutral dispatch
+  'mesa_drivers'       # Additional GPU drivers
 ]
 
 [phases.install]
@@ -28,4 +31,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python railway_deployment.py" 
+cmd = "python streamlit_app.py" 

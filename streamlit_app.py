@@ -4,14 +4,65 @@ Streamlit frontend for Video Commentary Bot
 
 import os
 import sys
+import subprocess
+import glob
+import json
+import logging
+
+# === FIX FOR OPENCV LIBRARY PATHS ===
+# Set LD_LIBRARY_PATH for OpenCV before any imports
+def setup_opencv_libraries():
+    # Create a lib directory if it doesn't exist
+    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib')
+    os.makedirs(lib_dir, exist_ok=True)
+    
+    # Add this directory to LD_LIBRARY_PATH
+    current_path = os.environ.get('LD_LIBRARY_PATH', '')
+    if lib_dir not in current_path:
+        if current_path:
+            os.environ['LD_LIBRARY_PATH'] = f"{current_path}:{lib_dir}"
+        else:
+            os.environ['LD_LIBRARY_PATH'] = lib_dir
+            
+    # On Railway/Linux, make sure Nix libraries are in LD_LIBRARY_PATH
+    if os.name != 'nt':  # Not Windows
+        # Common library paths in Nix
+        lib_paths = [
+            "/nix/store/*/lib",
+            "/nix/var/nix/profiles/default/lib",
+            "/usr/lib",
+            "/usr/lib/x86_64-linux-gnu"
+        ]
+        
+        # Expand glob patterns to find all matching directories
+        expanded_paths = []
+        for path in lib_paths:
+            if '*' in path:
+                expanded_paths.extend(glob.glob(path))
+            else:
+                if os.path.exists(path):
+                    expanded_paths.append(path)
+        
+        # Set the LD_LIBRARY_PATH environment variable
+        if expanded_paths:
+            new_path = ':'.join(expanded_paths)
+            if current_path:
+                full_path = f"{current_path}:{new_path}"
+            else:
+                full_path = new_path
+            
+            os.environ['LD_LIBRARY_PATH'] = full_path
+            print(f"LD_LIBRARY_PATH set to: {full_path}")
+
+# Run the library path setup before any imports
+setup_opencv_libraries()
+
+# Now import time and other modules
 import time
 import asyncio
 import streamlit as st
 from pathlib import Path
-import subprocess
-import json
 import hashlib
-import logging
 import psutil
 import tracemalloc
 
