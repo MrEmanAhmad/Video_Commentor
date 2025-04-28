@@ -1,9 +1,29 @@
 [phases.setup]
-nixPkgs = ['python310', 'gcc', 'ffmpeg', 'opencv4', 'libGL', 'xorg.libX11', 'xorg.libXext', 'xorg.libSM', 'xorg.libICE']
+nixPkgs = [
+  'python310', 
+  'gcc', 
+  'ffmpeg', 
+  'opencv4', 
+  'libGL', 
+  'xorg.libX11', 
+  'xorg.libXext', 
+  'xorg.libSM', 
+  'xorg.libICE',
+  'chromium',
+  'chromedriver',
+  'tesseract',
+  'glib',
+  'gtk3',
+  'at-spi2-atk',
+  'cairo',
+  'dbus',
+  'gobject-introspection',
+  'gnome.zenity',
+  'firefox'
+]
 
 [phases.install]
 cmds = [
-  "apt-get update && apt-get install -y $(cat apt.txt)",
   "python -m venv /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt"
 ]
 
