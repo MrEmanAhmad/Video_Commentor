@@ -1,1 +1,1 @@
-web: python railway_deployment.py 
+web: streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=$PORT --server.enableCORS=false --server.enableWebsocketCompression=false 

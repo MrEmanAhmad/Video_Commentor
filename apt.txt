@@ -1,0 +1,16 @@
+ffmpeg
+python3-opencv
+tesseract-ocr
+libsm6
+libxext6
+libxrender-dev
+libglib2.0-0
+libgl1-mesa-glx
+libgtk-3-0
+libpango-1.0-0
+libpangocairo-1.0-0
+libcairo2
+libnss3
+libatk1.0-0
+libgbm1
+libasound2 

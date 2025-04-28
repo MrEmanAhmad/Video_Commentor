@@ -1,281 +1,244 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Simplified Railway deployment script for Video Commentary Bot.
-This script handles all environment setup required for Railway deployment.
+Railway deployment script for Video Commentary Bot
+This script sets up the necessary environment and dependencies before starting the Streamlit app
 """
 
 import os
-import sys
 import subprocess
+import sys
 import glob
-import shutil
-import platform
-import json
-from pathlib import Path
+import logging
+import time
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+logger = logging.getLogger("railway_deployment")
 
 def check_command_exists(command):
-    """Check if a command exists in the system path."""
-    return shutil.which(command) is not None
-
-def run_command(command, silent=False):
-    """Run a shell command and return the output."""
+    """Check if a command exists in the PATH"""
     try:
-        result = subprocess.run(
-            command, 
-            check=False, 
-            stdout=subprocess.PIPE if silent else None,
-            stderr=subprocess.PIPE if silent else None,
-            text=True,
-            shell=isinstance(command, str)
+        subprocess.run(
+            ["which", command], 
+            check=True, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
         )
-        return result.returncode == 0, result.stdout if silent else ""
-    except Exception as e:
-        print(f"Error running command {command}: {e}")
-        return False, ""
-
-def install_system_dependencies():
-    """Install critical system dependencies without sudo (for Railway)."""
-    if not check_command_exists("apt-get"):
-        print("apt-get not found, skipping apt dependency installation")
-        return False
-        
-    # Critical dependencies needed for OpenCV and other libraries
-    dependencies = [
-        "libglib2.0-0",  # Includes libgthread
-        "libgtk-3-0",
-        "ffmpeg",
-        "python3-opencv",
-        "libgl1-mesa-glx",
-        "libsm6",
-        "libxext6",
-        "tesseract-ocr",
-        "libnss3",         # Required for Chromium
-        "libxcomposite1",  # Required for Chromium
-        "libxi6",          # Required for Chromium
-        "libxrandr2",      # Required for Chromium
-        "libxtst6",        # Required for Chromium
-        "libcairo2",       # Required for GTK
-        "libgirepository1.0-1", # Required for GTK
-        "chromium",        # Browser for YouTube cookies extraction
-        "chromium-driver"  # WebDriver for Selenium
-    ]
-    
-    print("Installing system dependencies for Railway...")
-    try:
-        # Update package lists
-        print("Running: apt-get update")
-        run_command("apt-get update -y")
-        
-        # Install packages
-        for package in dependencies:
-            print(f"Installing {package}...")
-            run_command(f"apt-get install -y {package}")
-            
         return True
-    except Exception as e:
-        print(f"Error installing packages: {e}")
+    except subprocess.CalledProcessError:
         return False
 
-def setup_library_paths():
-    """Set up library paths for OpenCV and other dependencies."""
-    print("Setting up library paths...")
+def run_command(command, shell=False):
+    """Run a shell command and return the output"""
+    logger.info(f"Running command: {command}")
+    result = subprocess.run(
+        command,
+        shell=shell,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    if result.returncode != 0:
+        logger.warning(f"Command failed with code {result.returncode}")
+        logger.warning(f"STDERR: {result.stderr}")
+    else:
+        logger.info(f"Command completed successfully")
     
-    # Create a directory for the libraries if it doesn't exist
-    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib')
-    os.makedirs(lib_dir, exist_ok=True)
+    return result
+
+def setup_opencvlib():
+    """Set up OpenCV library paths"""
+    logger.info("Setting up OpenCV library paths...")
     
-    # Add this directory to LD_LIBRARY_PATH
-    current_path = os.environ.get('LD_LIBRARY_PATH', '')
-    if lib_dir not in current_path:
-        if current_path:
-            os.environ['LD_LIBRARY_PATH'] = f"{current_path}:{lib_dir}"
-        else:
-            os.environ['LD_LIBRARY_PATH'] = lib_dir
+    if os.name == 'nt':  # Windows
+        logger.info("Windows detected, skipping OpenCV library path setup")
+        return True
     
-    # Print current platform for debugging
-    print(f"Running on platform: {platform.system()} - {platform.platform()}")
+    # Find OpenCV library locations
+    opencv_paths = []
     
-    # Skip on Windows (not using Railway)
-    if platform.system() == "Windows":
-        print("Windows detected, skipping library fixes")
-        return lib_dir
-    
-    # Critical libraries to find
-    critical_libraries = [
-        'libgthread-2.0.so*',
-        'libglib-2.0.so*',
-        'libGL.so*',
+    # Check standard locations
+    standard_paths = [
+        "/usr/lib",
+        "/usr/local/lib",
+        "/lib",
+        "/nix/store",
+        "/opt/conda/lib"
     ]
     
-    # System paths to search for libraries
-    system_paths = [
+    # Find installed OpenCV libraries
+    for base_path in standard_paths:
+        if os.path.exists(base_path):
+            # Look for libopencv in the base path
+            opencv_libs = glob.glob(f"{base_path}/*opencv*")
+            opencv_paths.extend(opencv_libs)
+            
+            # Look for OpenCV libraries in subdirectories
+            if base_path == "/nix/store":
+                # For Nix, we need to find all potential paths that contain OpenCV libraries
+                opencv_dirs = subprocess.run(
+                    f"find {base_path} -path '*opencv*' -type d", 
+                    shell=True, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    text=True
+                ).stdout.strip().split('\n')
+                
+                # Find lib directories within these paths
+                for dir in opencv_dirs:
+                    if dir:
+                        lib_paths = glob.glob(f"{dir}/lib")
+                        opencv_paths.extend(lib_paths)
+    
+    # Add the paths to LD_LIBRARY_PATH
+    if opencv_paths:
+        logger.info(f"Found OpenCV library paths: {opencv_paths}")
+        current_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+        
+        # Ensure each path is only added once
+        new_paths = []
+        for path in opencv_paths:
+            if path and path not in current_ld_path:
+                new_paths.append(path)
+        
+        if new_paths:
+            new_ld_path = ':'.join(new_paths)
+            if current_ld_path:
+                os.environ['LD_LIBRARY_PATH'] = f"{current_ld_path}:{new_ld_path}"
+            else:
+                os.environ['LD_LIBRARY_PATH'] = new_ld_path
+            
+            logger.info(f"Updated LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}")
+            return True
+        else:
+            logger.info("No new OpenCV library paths to add")
+            return True
+    else:
+        logger.warning("Could not find OpenCV library paths")
+        return False
+
+def check_dependencies():
+    """Check if required system dependencies are installed"""
+    logger.info("Checking system dependencies...")
+    
+    # List of dependencies to check
+    dependencies = ['ffmpeg', 'python3', 'tesseract']
+    
+    missing_deps = []
+    for dep in dependencies:
+        if not check_command_exists(dep):
+            missing_deps.append(dep)
+    
+    if missing_deps:
+        logger.warning(f"Missing dependencies: {', '.join(missing_deps)}")
+        return False
+    else:
+        logger.info("All required dependencies are installed")
+        return True
+
+def setup_environment():
+    """Set up environment variables and paths"""
+    logger.info("Setting up environment...")
+    
+    # Set Railway-specific environment variables
+    if 'PORT' not in os.environ:
+        os.environ['PORT'] = '8080'
+        logger.info("Set default PORT to 8080")
+    
+    # Set up LD_LIBRARY_PATH with common library locations in Railway/Nixpacks
+    lib_paths = [
+        "/nix/store/*/lib",
         "/usr/lib",
         "/usr/lib/x86_64-linux-gnu",
-        "/lib",
-        "/lib64",
-        "/opt/conda/lib",  # Railway might use conda
+        "/lib/x86_64-linux-gnu",
+        "/nix/var/nix/profiles/default/lib"
     ]
     
-    # Find and copy critical libraries
-    for lib_pattern in critical_libraries:
-        try:
-            lib_paths = []
-            # Search in system paths
-            for path in system_paths:
-                if os.path.exists(path):
-                    system_find_cmd = ["find", path, "-name", lib_pattern]
-                    try:
-                        sys_result = subprocess.run(system_find_cmd, capture_output=True, text=True, check=False)
-                        if sys_result.stdout:
-                            system_libs = sys_result.stdout.strip().split('\n')
-                            print(f"Found {len(system_libs)} matching libraries in {path}")
-                            lib_paths.extend([p for p in system_libs if p])
-                    except Exception as e:
-                        print(f"Error searching in {path}: {str(e)}")
-            
-            # Copy libraries to our lib directory
-            for src_path in lib_paths:
-                if src_path and os.path.isfile(src_path):
-                    filename = os.path.basename(src_path)
-                    dest_path = os.path.join(lib_dir, filename)
-                    
-                    # Copy the file if it doesn't exist or if it's different
-                    if not os.path.exists(dest_path) or os.path.getsize(src_path) != os.path.getsize(dest_path):
-                        print(f"Copying {src_path} to {dest_path}")
-                        shutil.copy2(src_path, dest_path)
-                        
-                        # Create symlinks for versioned libraries
-                        if '.' in filename and not filename.endswith('.a') and not filename.endswith('.la'):
-                            base_name = filename.split('.so.')[0] + '.so'
-                            symlink_path = os.path.join(lib_dir, base_name)
-                            if not os.path.exists(symlink_path) or os.path.islink(symlink_path):
-                                if os.path.exists(symlink_path):
-                                    os.remove(symlink_path)
-                                print(f"Creating symlink {symlink_path} -> {filename}")
-                                os.symlink(filename, symlink_path)
-            
-            # Special check for libgthread-2.0.so.0
-            if lib_pattern == 'libgthread-2.0.so*' and not glob.glob(os.path.join(lib_dir, 'libgthread-2.0.so*')):
-                print("libgthread-2.0.so.0 not found - trying to install libglib2.0-0")
-                run_command("apt-get install -y libglib2.0-0")
-                
-        except Exception as e:
-            print(f"Error processing library pattern '{lib_pattern}': {str(e)}")
+    # Expand glob patterns
+    expanded_paths = []
+    for path in lib_paths:
+        if '*' in path:
+            expanded = glob.glob(path)
+            expanded_paths.extend(expanded)
+        elif os.path.exists(path):
+            expanded_paths.append(path)
     
-    # Print the contents of the lib directory
-    print("\nContents of the lib directory:")
-    for filename in sorted(os.listdir(lib_dir)):
-        file_path = os.path.join(lib_dir, filename)
-        if os.path.islink(file_path):
-            target = os.readlink(file_path)
-            print(f"  {filename} -> {target}")
+    if expanded_paths:
+        current_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+        new_ld_path = ':'.join(expanded_paths)
+        
+        if current_ld_path:
+            os.environ['LD_LIBRARY_PATH'] = f"{current_ld_path}:{new_ld_path}"
         else:
-            print(f"  {filename}")
+            os.environ['LD_LIBRARY_PATH'] = new_ld_path
+        
+        logger.info(f"Set LD_LIBRARY_PATH to: {os.environ['LD_LIBRARY_PATH']}")
     
-    return lib_dir
+    return True
 
-def setup_google_credentials():
-    """Set up Google credentials from environment variables."""
-    # Check if the JSON credentials are provided as an environment variable
-    google_creds_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+def start_streamlit():
+    """Start the Streamlit application"""
+    logger.info("Starting Streamlit application...")
     
-    if not google_creds_json:
-        print("Warning: GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable not found.")
-        return
+    port = os.environ.get('PORT', '8080')
     
-    # Try to parse the credentials
-    try:
-        if isinstance(google_creds_json, str):
-            creds_dict = json.loads(google_creds_json)
-        else:
-            creds_dict = google_creds_json
-            
-        # Write the credentials to a file
-        creds_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'google_credentials.json')
-        
-        with open(creds_file_path, 'w') as f:
-            json.dump(creds_dict, f, indent=2)
-        
-        # Set the environment variable to point to this file
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_file_path
-        print(f"Google credentials written to {creds_file_path}")
-        
-    except Exception as e:
-        print(f"Error setting up Google credentials: {str(e)}")
-
-def check_python_dependencies():
-    """Check and install required Python dependencies."""
-    try:
-        print("Checking Python dependencies...")
-        
-        # Try importing key modules
-        import_success = True
-        try:
-            import streamlit
-            import openai
-            import dashscope
-            import google.cloud.texttospeech
-            import cv2
-            import yt_dlp
-            import numpy
-            import PIL
-        except ImportError as e:
-            import_success = False
-            print(f"Import error: {e}")
-            
-        # If imports failed, try reinstalling dependencies
-        if not import_success:
-            print("Some dependencies are missing, installing from requirements.txt...")
-            run_command("pip install -r requirements.txt")
-            
-        return True
-    except Exception as e:
-        print(f"Error checking Python dependencies: {e}")
-        return False
+    # Define Streamlit command
+    command = [
+        "streamlit", "run", "streamlit_app.py",
+        "--server.address=0.0.0.0",
+        f"--server.port={port}",
+        "--server.enableCORS=false",
+        "--server.enableWebsocketCompression=false"
+    ]
+    
+    # Log the command we're about to run
+    logger.info(f"Running Streamlit with command: {' '.join(command)}")
+    
+    # Execute command with process replacement
+    os.execvp(command[0], command)
 
 def main():
-    """Main function to set up all dependencies and start the Streamlit app."""
-    print(f"Setting up Railway deployment for platform: {platform.platform()}")
+    """Main entry point"""
+    logger.info("Starting Railway deployment script")
     
-    # Print useful environment information
-    print("\nCurrent environment:")
-    print(f"  Python: {sys.version}")
-    print(f"  Working directory: {os.getcwd()}")
-    print(f"  LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'Not set')}")
+    # Wait a moment for system stabilization
+    time.sleep(1)
     
-    # Install system dependencies
-    install_system_dependencies()
+    # Print the environment for debugging
+    logger.info("Environment variables:")
+    for key, value in os.environ.items():
+        logger.info(f"  {key}={value}")
     
-    # Set up libraries
-    lib_dir = setup_library_paths()
+    # Setup steps
+    steps = [
+        ("Checking dependencies", check_dependencies),
+        ("Setting up environment", setup_environment),
+        ("Setting up OpenCV libraries", setup_opencvlib),
+    ]
     
-    # Check Python dependencies
-    check_python_dependencies()
+    # Run setup steps
+    for step_name, step_func in steps:
+        logger.info(f"Starting step: {step_name}")
+        try:
+            result = step_func()
+            if not result:
+                logger.warning(f"Step '{step_name}' did not complete successfully")
+            else:
+                logger.info(f"Step '{step_name}' completed successfully")
+        except Exception as e:
+            logger.error(f"Error in step '{step_name}': {str(e)}")
     
-    # Set up Google credentials
-    setup_google_credentials()
-    
-    # Print environment variables
-    print("\nEnvironment variables:")
-    for name, value in sorted(os.environ.items()):
-        if name.startswith('LD_') or name.startswith('PYTHON') or name.startswith('PATH'):
-            print(f"  {name}={value}")
-    
-    # Add current directory to Python path
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    
-    # Start the Streamlit app
-    cmd = ["streamlit", "run", "streamlit_app.py"]
-    
-    # If PORT is set in environment variables, use it
-    port = os.environ.get('PORT')
-    if port:
-        cmd.extend(["--server.port", port])
-    
-    print(f"\nStarting Streamlit with command: {' '.join(cmd)}")
-    
-    # Run the Streamlit app
-    subprocess.run(cmd)
+    # Start Streamlit
+    try:
+        start_streamlit()
+    except Exception as e:
+        logger.error(f"Failed to start Streamlit: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 

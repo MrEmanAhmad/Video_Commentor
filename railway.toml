@@ -1,0 +1,16 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+startCommand = "streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=$PORT --server.enableCORS=false --server.enableWebsocketCompression=false"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[nixpacks]
+platforms = ["ubuntu:22.04"]
+
+[nixpacks.setup]
+nixPkgs = ["ffmpeg", "opencv", "python310", "mesa", "libGL", "gtk3", "glib", "tesseract", "cairo", "pango"] 
