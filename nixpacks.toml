@@ -18,11 +18,11 @@ nixPkgs = [
   'cairo',
   'dbus',
   'gobject-introspection',
-  'gnome.zenity',
+  'zenity',
   'firefox',
   'mesa',              # OpenGL implementation
   'libglvnd',          # GL vendor-neutral dispatch
-  'mesa_drivers'       # Additional GPU drivers
+  'mesa.drivers'       # Additional GPU drivers
 ]
 
 [phases.install]
