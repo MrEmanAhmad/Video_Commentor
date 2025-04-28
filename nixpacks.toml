@@ -1,8 +1,11 @@
 [phases.setup]
-nixPkgs = ['python310', 'gcc', 'ffmpeg', 'opencv4']
+nixPkgs = ['python310', 'gcc', 'ffmpeg', 'opencv4', 'libGL', 'xorg.libX11', 'xorg.libXext', 'xorg.libSM', 'xorg.libICE']
 
 [phases.install]
-cmds = ["python -m venv /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt"]
+cmds = [
+  "apt-get update && apt-get install -y $(cat apt.txt)",
+  "python -m venv /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt"
+]
 
 [start]
 cmd = "python railway_start.py" 
