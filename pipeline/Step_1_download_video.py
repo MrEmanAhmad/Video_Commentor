@@ -20,7 +20,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_VIDEO_DURATION = 120  # Maximum video duration in seconds (2 minutes)
+MAX_VIDEO_DURATION = 300  # Maximum video duration in seconds (5 minutes)
 
 class VideoDownloader:
     """Downloads videos using yt-dlp."""

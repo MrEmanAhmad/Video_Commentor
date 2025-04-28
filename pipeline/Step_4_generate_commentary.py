@@ -7,11 +7,17 @@ import logging
 import os
 import re
 import random
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List
 
 from openai import OpenAI
+
+# Add parent directory to path for config import
+sys.path.append(str(Path(__file__).parent.parent))
+from config import DASHSCOPE_API_KEY, OPENAI_API_KEY
+
 from .prompts import PromptManager, LLMProvider, COMMENTARY_STYLES, SPEECH_PATTERNS
 
 logger = logging.getLogger(__name__)
@@ -24,7 +30,7 @@ class ContentType(Enum):
     INFOGRAPHIC = "infographic"
 
 class CommentaryGenerator:
-    """Generates video commentary using OpenAI."""
+    """Generates video commentary using Qwen for English and OpenAI for translation."""
     
     def __init__(self, content_type: ContentType):
         """
@@ -34,7 +40,8 @@ class CommentaryGenerator:
             content_type: Type of content for commentary generation
         """
         self.content_type = content_type
-        self.prompt_manager = PromptManager()
+        # Default to Qwen for English content
+        self.prompt_manager = PromptManager(provider=LLMProvider.QWEN)
         
     def _build_system_prompt(self) -> str:
         """Build system prompt based on content type."""
@@ -51,64 +58,41 @@ class CommentaryGenerator:
         # Get vision analysis with enhanced validation
         vision_insights = {
             'objects': [],
-            'labels': [],
             'descriptions': []
         }
         
-        if 'frames' in analysis:
-            # Track confidence scores for better object validation
-            object_confidence = {}
-            label_confidence = {}
-            
+        # Check if analysis was skipped
+        analysis_skipped = analysis.get('is_basic_analysis', False)
+        
+        if not analysis_skipped and 'frames' in analysis:
             for frame in analysis['frames']:
-                if 'google_vision' in frame:
-                    # Aggregate objects with confidence tracking
-                    for obj in frame['google_vision'].get('objects', []):
-                        name = obj['name']
-                        conf = obj['confidence']
-                        area = obj.get('area', 0)
-                        
-                        if name not in object_confidence or conf > object_confidence[name]['confidence']:
-                            object_confidence[name] = {
-                                'confidence': conf,
-                                'area': area,
-                                'count': object_confidence.get(name, {}).get('count', 0) + 1
-                            }
-                    
-                    # Aggregate labels with confidence tracking
-                    for label in frame['google_vision'].get('labels', []):
-                        desc = label['description']
-                        conf = label['confidence']
-                        
-                        if desc not in label_confidence or conf > label_confidence[desc]:
-                            label_confidence[desc] = conf
-                
-                if 'openai_vision' in frame:
+                # Check for Qwen vision analysis
+                if 'qwen_vision' in frame:
+                    desc = frame['qwen_vision'].get('detailed_description', '')
+                    if desc:
+                        vision_insights['descriptions'].append(desc)
+                # Backwards compatibility for OpenAI vision
+                elif 'openai_vision' in frame:
                     desc = frame['openai_vision'].get('detailed_description', '')
                     if desc:
                         vision_insights['descriptions'].append(desc)
-            
-            # Filter and sort objects by confidence and frequency
-            vision_insights['objects'] = [
-                {
-                    'name': name,
-                    'confidence': data['confidence'],
-                    'area': data['area'],
-                    'frequency': data['count']
-                }
-                for name, data in object_confidence.items()
-                if data['confidence'] >= 0.7 and data['count'] >= 2  # Require multiple detections
-            ]
-            vision_insights['objects'].sort(key=lambda x: (x['frequency'], x['confidence'], x['area']), reverse=True)
-            
-            # Filter and sort labels by confidence
-            vision_insights['labels'] = [
-                {'description': desc, 'confidence': conf}
-                for desc, conf in label_confidence.items()
-                if conf >= 0.7
-            ]
-            vision_insights['labels'].sort(key=lambda x: x['confidence'], reverse=True)
         
+        # Extract objects from descriptions using NLP parsing
+        objects_mentioned = set()
+        for desc in vision_insights['descriptions']:
+            # Use regex to find potential objects (nouns) in the description
+            # This is a simple approach - in a real system we might use a more sophisticated NLP approach
+            potential_objects = re.findall(r'\b([A-Z][a-z]+|[a-z]+)\b', desc)
+            for obj in potential_objects:
+                if len(obj) > 3 and obj.lower() not in ['with', 'this', 'that', 'there', 'here', 'from', 'what', 'when', 'where', 'which', 'while']:
+                    objects_mentioned.add(obj)
+        
+        # Convert to list and add to insights with default confidence
+        vision_insights['objects'] = [
+            {'name': obj, 'confidence': 0.9, 'frequency': 1}
+            for obj in objects_mentioned
+        ]
+            
         # Build content text with enhanced analysis
         content_text = "VIDEO CONTENT:\n"
         if video_title:
@@ -118,22 +102,21 @@ class CommentaryGenerator:
         if video_text:
             content_text += f"Text: {video_text}\n"
             
-        content_text += "\nVISUAL ANALYSIS:\n"
-        
-        if vision_insights['objects']:
-            content_text += "\nMain subjects detected (with confidence and frequency):\n"
-            for obj in vision_insights['objects'][:5]:  # Focus on top 5 most confident/frequent objects
-                content_text += f"- {obj['name']} (confidence: {obj['confidence']:.2f}, seen {obj['frequency']} times)\n"
-        
-        if vision_insights['labels']:
-            content_text += "\nKey visual elements (with confidence):\n"
-            for label in vision_insights['labels'][:8]:  # Include more relevant labels
-                content_text += f"- {label['description']} ({label['confidence']:.2f})\n"
-        
-        if vision_insights['descriptions']:
-            content_text += "\nDetailed scene descriptions:\n"
-            for desc in vision_insights['descriptions'][:2]:  # Include top 2 most detailed descriptions
-                content_text += f"- {desc}\n"
+        # If analysis was skipped, adjust prompt accordingly
+        if analysis_skipped:
+            content_text += "\nNOTE: Detailed visual analysis was skipped.\n"
+        else:
+            content_text += "\nVISUAL ANALYSIS:\n"
+            
+            if vision_insights['objects']:
+                content_text += "\nMain subjects detected:\n"
+                for obj in vision_insights['objects'][:5]:  # Focus on top 5 objects
+                    content_text += f"- {obj['name']}\n"
+            
+            if vision_insights['descriptions']:
+                content_text += "\nDetailed scene descriptions:\n"
+                for desc in vision_insights['descriptions'][:2]:  # Include top 2 most detailed descriptions
+                    content_text += f"- {desc}\n"
         
         selected_language = analysis['metadata'].get('language', 'en')
         
@@ -149,7 +132,7 @@ STRICT REQUIREMENTS:
 5. Make it engaging but concise
 6. Format for {selected_language}
 7. Ensure commentary reflects both visual content and video description
-8. Correct any obvious errors in object detection (e.g., if a deer was labeled as a dog)"""
+8. Correct any obvious errors in object detection"""
 
         if selected_language == 'ur':
             base_prompt += """
@@ -187,6 +170,17 @@ STRICT REQUIREMENTS:
             logger.info("\n=== VIDEO TEXT FROM METADATA ===")
             logger.info(video_text if video_text else "No text found in metadata")
             
+            # Get the target language from metadata
+            language = analysis['metadata'].get('language', 'en')
+            
+            # Select the appropriate provider based on language
+            if language == 'en':
+                # Use Qwen for English
+                self.prompt_manager = PromptManager(provider=LLMProvider.QWEN, language=language)
+            else:
+                # First use Qwen to generate English commentary, then translate with OpenAI
+                self.prompt_manager = PromptManager(provider=LLMProvider.QWEN, language='en')
+            
             # Build messages for the API call
             system_prompt = self._build_system_prompt()
             user_prompt = self._build_prompt(analysis)
@@ -205,9 +199,17 @@ STRICT REQUIREMENTS:
             try:
                 # Generate commentary using the prompt manager
                 logger.info("\n=== GENERATING COMMENTARY ===")
+                
+                # If using Qwen, specify the Qwen model
+                if self.prompt_manager.provider == LLMProvider.QWEN:
+                    model_name = "qwen-plus"
+                else:
+                    model_name = "gpt-4o-mini"
+                
+                # Generate English commentary
                 commentary_text = self.prompt_manager.generate_response(
                     messages=messages,
-                    model="gpt-4o-mini",
+                    model=model_name,
                     temperature=0.7,
                     max_tokens=500
                 )
@@ -218,9 +220,19 @@ STRICT REQUIREMENTS:
                 if not commentary_text:
                     logger.error("Empty response from API")
                     return None
+                
+                # If language is not English, translate using OpenAI
+                if language != 'en':
+                    logger.info("\n=== TRANSLATING TO NON-ENGLISH LANGUAGE ===")
+                    commentary_text = await self.prompt_manager.translate_text(
+                        text=commentary_text,
+                        source_language='en',
+                        target_language=language
+                    )
+                    logger.info("\n=== TRANSLATED COMMENTARY ===")
+                    logger.info(commentary_text)
 
                 # Process the generated text
-                language = analysis['metadata'].get('language', 'en')
                 processed_text = self._process_response(commentary_text, language)
                 
                 logger.info("\n=== PROCESSED COMMENTARY ===")
@@ -269,23 +281,19 @@ STRICT REQUIREMENTS:
             "scene_transitions": []
         }
 
-        # Track unique objects and elements using dictionaries
-        unique_objects = {}
-        recurring_objects = {}
-
+        # Extract objects from the Qwen vision descriptions
         for frame in frames:
             timestamp = float(frame['timestamp'])
             
-            # Track objects and elements
-            if 'google_vision' in frame:
-                frame_objects = []
-                for obj in frame['google_vision'].get('objects', []):
-                    name = obj['name']
-                    frame_objects.append(name)
-                    if name not in unique_objects:
-                        unique_objects[name] = obj
-                    elif name in unique_objects and name not in recurring_objects:
-                        recurring_objects[name] = obj
+            # Extract objects from description using simple NLP
+            frame_objects = []
+            if 'qwen_vision' in frame and 'detailed_description' in frame['qwen_vision']:
+                description = frame['qwen_vision']['detailed_description']
+                # Simple object extraction - in a real system, use more sophisticated NLP
+                words = re.findall(r'\b([A-Z][a-z]+|[a-z]+)\b', description)
+                for word in words:
+                    if len(word) > 3 and word.lower() not in ['with', 'this', 'that', 'there', 'here', 'from', 'what', 'when', 'where', 'which', 'while']:
+                        frame_objects.append(word)
             
             # Track scene transitions
             if len(sequence['timeline']) > 0:
@@ -295,13 +303,22 @@ STRICT REQUIREMENTS:
             
             sequence['timeline'].append({
                 'timestamp': timestamp,
-                'objects': frame_objects if 'google_vision' in frame else [],
-                'description': frame.get('openai_vision', {}).get('detailed_description', '')
+                'objects': frame_objects,
+                'description': frame.get('qwen_vision', {}).get('detailed_description', '')
             })
         
-        # Convert tracked objects to lists
-        sequence['key_objects'] = list(unique_objects.keys())
-        sequence['recurring_elements'] = list(recurring_objects.keys())
+        # Analyze object frequency across frames to identify key and recurring elements
+        object_frequency = {}
+        for entry in sequence['timeline']:
+            for obj in entry['objects']:
+                object_frequency[obj] = object_frequency.get(obj, 0) + 1
+        
+        # Categorize objects based on frequency
+        for obj, freq in object_frequency.items():
+            if freq >= 3:  # Recurring elements appear in 3+ frames
+                sequence['recurring_elements'].append(obj)
+            elif freq >= 1:  # Key objects appear in at least 1 frame
+                sequence['key_objects'].append(obj)
         
         return sequence
 
@@ -688,6 +705,113 @@ URDU NARRATION REQUIREMENTS:
         text = re.sub(r'\s+', ' ', text)
         
         return text.strip()
+
+    async def _validate_text_format(self, text: str, language: str) -> str:
+        """
+        Validates and corrects text format based on language.
+        
+        Args:
+            text: The text to validate and format
+            language: The language code (en, ur, bn, hi, tr)
+            
+        Returns:
+            Properly formatted text
+        """
+        # Set minimum text length by language (characters)
+        min_lengths = {
+            'en': 50,  # English
+            'ur': 50,  # Urdu
+            'bn': 50,  # Bengali 
+            'hi': 50,  # Hindi
+            'tr': 50,  # Turkish
+            'en-GB': 50  # British English
+        }
+        
+        # Get minimum length for this language, default to 50
+        min_length = min_lengths.get(language, 50)
+        
+        # Check if text is empty or too short
+        if not text or len(text) < min_length:
+            if language == 'en' or language == 'en-GB':
+                return "This video shows an interesting scene that captures the viewer's attention."
+            elif language == 'ur':
+                return "اس ویڈیو میں ایک دلچسپ منظر دکھایا گیا ہے جو ناظرین کی توجہ حاصل کرتا ہے۔"
+            elif language == 'bn':
+                return "এই ভিডিওটি একটি মনোগ্রাহী দৃশ্য দেখায় যা দর্শকদের দৃষ্টি আকর্ষণ করে।"
+            elif language == 'hi':
+                return "इस वीडियो में एक दिलचस्प दृश्य दिखाया गया है जो दर्शकों का ध्यान आकर्षित करता है।"
+            elif language == 'tr':
+                return "Bu video, izleyicinin dikkatini çeken ilginç bir sahne gösteriyor."
+            else:
+                return "This video shows an interesting scene that captures the viewer's attention."
+        
+        # Language-specific formatting
+        if language == 'en' or language == 'en-GB':
+            # For English, ensure proper punctuation
+            if not text.endswith(('.', '!', '?')):
+                text += '.'
+            # Convert multiple spaces to single space
+            text = ' '.join(text.split())
+        
+        elif language == 'ur':
+            # For Urdu, ensure proper punctuation
+            if not any(text.endswith(char) for char in ['۔', '!', '؟']):
+                text += '۔'
+            # Ensure proper spacing
+            text = ' '.join(text.split())
+        
+        elif language == 'bn':
+            # For Bengali, ensure proper punctuation
+            if not any(text.endswith(char) for char in ['।', '!', '?']):
+                text += '।'
+            # Ensure proper spacing
+            text = ' '.join(text.split())
+        
+        elif language == 'hi':
+            # For Hindi, ensure proper punctuation
+            if not any(text.endswith(char) for char in ['।', '!', '?']):
+                text += '।'
+            # Ensure proper spacing
+            text = ' '.join(text.split())
+        
+        elif language == 'tr':
+            # For Turkish, ensure proper punctuation
+            if not text.endswith(('.', '!', '?')):
+                text += '.'
+            # Convert multiple spaces to single space
+            text = ' '.join(text.split())
+        
+        return text
+
+    def _calculate_word_limit(self, duration: float, language: str = 'en') -> int:
+        """
+        Calculate approximate word limit based on duration and language.
+        
+        Args:
+            duration: Speech duration in seconds
+            language: Language code
+            
+        Returns:
+            Approximate word limit
+        """
+        # Words per minute rates for different languages
+        wpm_rates = {
+            'en': 150,    # English: ~150 words per minute
+            'en-GB': 150, # British English: ~150 words per minute
+            'ur': 120,    # Urdu: ~120 words per minute
+            'bn': 125,    # Bengali: ~125 words per minute
+            'hi': 125,    # Hindi: ~125 words per minute
+            'tr': 140     # Turkish: ~140 words per minute
+        }
+        
+        # Get words per minute for this language, default to English
+        wpm = wpm_rates.get(language, 150)
+        
+        # Calculate word limit with a buffer (80% of theoretical maximum)
+        word_limit = int((duration / 60) * wpm * 0.8)
+        
+        # Ensure minimum word count (at least 20 words)
+        return max(word_limit, 20)
 
 def process_for_audio(commentary: str, language: str = 'en') -> str:
     """

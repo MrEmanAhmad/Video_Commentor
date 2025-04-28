@@ -1,784 +1,792 @@
+"""
+Streamlit frontend for Video Commentary Bot
+"""
+
 import os
 import sys
-import logging
+import time
+import asyncio
+import streamlit as st
 from pathlib import Path
+import subprocess
 import json
+import hashlib
+import logging
+import psutil
+import tracemalloc
 
-# Configure logging first
+# Add the current directory to path to ensure imports work
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# Import pipeline steps
+from pipeline.Step_1_download_video import execute_step as download_video, download_from_url
+from pipeline.Step_2_extract_frames import execute_step as extract_frames
+from pipeline.Step_3_analyze_frames import execute_step as analyze_frames
+from pipeline.Step_4_generate_commentary import execute_step as generate_commentary
+from pipeline.Step_5_generate_audio import execute_step as generate_audio
+from pipeline.Step_6_video_generation import execute_step as generate_video
+from pipeline.Step_7_cleanup import execute_step as cleanup
+
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('streamlit_app.log', encoding='utf-8')
+        logging.StreamHandler(sys.stdout)
     ]
 )
+
 logger = logging.getLogger(__name__)
 
-# Set stdout and stderr encoding to UTF-8
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
-if sys.stderr.encoding != 'utf-8':
-    sys.stderr.reconfigure(encoding='utf-8')
-
-# Add the current directory to Python path
-sys.path.append(str(Path(__file__).parent))
-
-try:
-    import streamlit as st
+class ResourceMonitor:
+    """Monitors resource usage during video processing."""
     
-    # Set page config first
-    st.set_page_config(
-        page_title="AI Video Commentary Bot",
-        page_icon="🎬",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        menu_items={
-            'Get Help': None,
-            'Report a bug': None,
-            'About': None
+    def __init__(self, enabled=True):
+        """Initialize the resource monitor.
+        
+        Args:
+            enabled: Whether to enable monitoring
+        """
+        self.enabled = enabled
+        self.steps = {}
+        self.current_step = None
+        self.start_time = None
+        self.process = psutil.Process()
+        
+        if enabled:
+            # Start memory tracking
+            tracemalloc.start()
+    
+    def start_step(self, step_name):
+        """Start monitoring a step."""
+        if not self.enabled:
+            return
+            
+        self.current_step = step_name
+        self.start_time = time.time()
+        _, self.start_memory = tracemalloc.get_traced_memory()
+    
+    def end_step(self):
+        """End monitoring the current step."""
+        if not self.enabled or not self.current_step:
+            return
+            
+        elapsed = time.time() - self.start_time
+        _, current_memory = tracemalloc.get_traced_memory()
+        memory_used = current_memory - self.start_memory
+        
+        self.steps[self.current_step] = {
+            'time': elapsed,
+            'memory': memory_used,
+            'cpu': self.process.cpu_percent()
         }
-    )
+        
+        logger.info(f"Step {self.current_step} completed in {elapsed:.2f}s, memory: {memory_used / 1024 / 1024:.2f}MB")
+        self.current_step = None
     
-    # Show loading message
-    loading_placeholder = st.empty()
-    loading_placeholder.info("🔄 Initializing application...")
+    def get_summary(self):
+        """Get a summary of resource usage."""
+        if not self.enabled:
+            return {}
+            
+        total_time = sum(step['time'] for step in self.steps.values())
+        total_memory = sum(step['memory'] for step in self.steps.values())
+        
+        return {
+            'steps': self.steps,
+            'total_time': total_time,
+            'total_memory': total_memory,
+            'summary': {
+                'time_seconds': f"{total_time:.2f}",
+                'memory_mb': f"{total_memory / 1024 / 1024:.2f}"
+            }
+        }
     
-    # Load configuration
+    def stop(self):
+        """Stop the resource monitor."""
+        if self.enabled:
+            tracemalloc.stop()
+            
+    def save_report(self, output_path):
+        """Save a resource usage report to a file."""
+        if not self.enabled:
+            return
+            
+        summary = self.get_summary()
+        
+        with open(output_path, 'w') as f:
+            json.dump(summary, f, indent=2)
+        
+        logger.info(f"Resource report saved to {output_path}")
+
+async def process_video(
+    video_url: str, 
+    output_dir: str = "./output",
+    language: str = "en",
+    commentary_style: str = "descriptive",
+    preserve_temp: bool = False,
+    cleanup_temp: bool = True,
+    watermark_text: str = None,
+    watermark_size: int = 36,
+    watermark_color: str = "white",
+    watermark_font: str = "Arial",
+    skip_analysis: bool = False,
+    monitor_resources: bool = False
+):
+    """
+    Process a video through the entire pipeline.
+    
+    Args:
+        video_url: URL to the video to process
+        output_dir: Directory to save output files
+        language: Language for commentary (ISO code)
+        commentary_style: Style for commentary generation
+        preserve_temp: Whether to preserve temporary files
+        cleanup_temp: Whether to run cleanup step
+        watermark_text: Optional text to display as watermark
+        watermark_size: Font size for watermark text
+        watermark_color: Color of the watermark text
+        watermark_font: Font to use for watermark
+        skip_analysis: Whether to skip the frame analysis step
+        monitor_resources: Whether to monitor resource usage
+    
+    Returns:
+        Path to the final video file
+    """
+    # Initialize resource monitor if requested
+    resource_monitor = ResourceMonitor(enabled=monitor_resources)
+    
     try:
-        # Define required variables
-        required_vars = [
-            'OPENAI_API_KEY',
-            'DEEPSEEK_API_KEY',
-            'GOOGLE_APPLICATION_CREDENTIALS_JSON'
-        ]
+        # Prepare output directories
+        base_output_dir = Path(output_dir)
+        base_output_dir.mkdir(parents=True, exist_ok=True)
         
-        # First try to get variables from environment (Railway)
-        env_vars = {var: os.getenv(var) for var in required_vars}
-        missing_vars = [var for var, value in env_vars.items() if not value]
+        # Create unique job ID based on input video
+        job_id = hashlib.md5(video_url.encode()).hexdigest()[:8]
+        job_dir = base_output_dir / job_id
         
-        # Log environment status
-        logger.info("Checking environment variables...")
-        for var in required_vars:
-            if os.getenv(var):
-                logger.info(f"✓ Found {var} in environment")
-            else:
-                logger.warning(f"✗ Missing {var} in environment")
+        # Create step-specific directories
+        steps_dirs = {
+            "download": job_dir / "01_download",
+            "frames": job_dir / "02_frames",
+            "analysis": job_dir / "03_analysis",
+            "commentary": job_dir / "04_commentary",
+            "audio": job_dir / "05_audio",
+            "final": job_dir / "06_final"
+        }
         
-        # Try to load from railway.json if any variables are missing
-        if missing_vars:
-            logger.info("Some variables missing, checking railway.json...")
-            railway_file = Path("railway.json")
-            if railway_file.exists():
-                logger.info("Found railway.json, loading configuration...")
-                with open(railway_file, 'r') as f:
-                    config = json.load(f)
-                for var in missing_vars:
-                    if var in config:
-                        os.environ[var] = str(config[var])
-                        logger.info(f"Loaded {var} from railway.json")
-            else:
-                logger.warning("railway.json not found")
+        # Create all directories
+        for dir_path in steps_dirs.values():
+            dir_path.mkdir(parents=True, exist_ok=True)
         
-        # Final check for required variables
-        still_missing = [var for var in required_vars if not os.getenv(var)]
-        if still_missing:
-            error_msg = f"Missing required environment variables: {', '.join(still_missing)}"
-            logger.error(error_msg)
-            st.error(f"⚠️ Configuration Error: {error_msg}")
-            st.error("Please ensure all required environment variables are set in Railway or railway.json")
-            st.stop()
+        logger.info(f"Processing video: {video_url}")
+        logger.info(f"Job ID: {job_id}")
+        logger.info(f"Skip frame analysis: {skip_analysis}")
         
-        # Set up Google credentials
-        if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in os.environ:
+        # Step 1: Download Video
+        resource_monitor.start_step("download_video")
+        logger.info("Step 1: Downloading video...")
+        # Use the async download function which returns the video path directly
+        video_path = await download_from_url(video_url, steps_dirs["download"])
+        resource_monitor.end_step()
+        
+        # Load the metadata from the JSON file
+        metadata_file = steps_dirs["download"] / "video_metadata.json"
+        with open(metadata_file, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+        
+        # Add language to metadata
+        metadata['language'] = language
+        metadata['style'] = commentary_style
+            
+        # Step 2: Extract Frames
+        resource_monitor.start_step("extract_frames")
+        logger.info("Step 2: Extracting frames...")
+        frames_result = extract_frames(video_path, steps_dirs["frames"])
+        if "error" in frames_result:
+            raise Exception(f"Frame extraction failed: {frames_result['error']}")
+        resource_monitor.end_step()
+        
+        # Initialize frames_info with basic data
+        frames_info = {
+            "frames_dir": str(steps_dirs["frames"]),
+            "metadata": metadata,
+            "frames": frames_result["frames"] if "frames" in frames_result else []
+        }
+        
+        # Step 3: Analyze Frames (optional)
+        if not skip_analysis:
+            resource_monitor.start_step("analyze_frames")
+            logger.info("Step 3: Analyzing frames...")
+            analysis_result = await analyze_frames(frames_info, steps_dirs["analysis"])
+            frames_info = analysis_result
+            resource_monitor.end_step()
+        else:
+            logger.info("Step 3: Skipping frame analysis as requested by skip_analysis flag...")
+            # Create a basic analysis result file so downstream steps don't fail
+            basic_analysis = {
+                "frames_dir": str(steps_dirs["frames"]),
+                "metadata": metadata,
+                "frames": frames_info["frames"],
+                "analysis_complete": False,
+                "is_basic_analysis": True,
+                "skipped_by_user": True
+            }
+            analysis_file = steps_dirs["analysis"] / "frame_analysis.json"
+            logger.info(f"Creating basic analysis file at {analysis_file}")
+            with open(analysis_file, 'w', encoding='utf-8') as f:
+                json.dump(basic_analysis, f, indent=2)
+            frames_info = basic_analysis
+            logger.info("Basic analysis complete - no API calls were made")
+        
+        # Step 4: Generate Commentary
+        resource_monitor.start_step("generate_commentary")
+        logger.info("Step 4: Generating commentary...")
+        commentary_result = await generate_commentary(
+            frames_info=frames_info,
+            output_dir=steps_dirs["commentary"],
+            content_type=commentary_style
+        )
+        resource_monitor.end_step()
+        
+        # Step 5: Generate Audio
+        resource_monitor.start_step("generate_audio")
+        logger.info("Step 5: Generating audio...")
+        audio_file = await generate_audio(
+            frames_info=frames_info, 
+            output_dir=steps_dirs["audio"],
+            style=commentary_style
+        )
+        resource_monitor.end_step()
+        
+        # Step 6: Generate Final Video
+        resource_monitor.start_step("generate_video")
+        logger.info("Step 6: Generating final video...")
+        # Log watermark info if provided
+        if watermark_text:
+            logger.info(f"Adding watermark: '{watermark_text}', size: {watermark_size}, color: {watermark_color}, font: {watermark_font}")
+            
+        video_result = generate_video(
+            video_path=video_path,
+            audio_path=audio_file,
+            output_dir=steps_dirs["final"],
+            watermark_text=watermark_text,
+            watermark_size=watermark_size,
+            watermark_color=watermark_color,
+            watermark_font=watermark_font
+        )
+        resource_monitor.end_step()
+        
+        if "error" in video_result:
+            raise Exception(f"Video generation failed: {video_result['error']}")
+        
+        # Step 7: Cleanup (optional)
+        if cleanup_temp and not preserve_temp:
+            resource_monitor.start_step("cleanup")
+            logger.info("Step 7: Cleaning up temporary files...")
+            cleanup_result = cleanup([job_dir], preserve=["final"])
+            logger.info(f"Cleanup completed: {cleanup_result}")
+            resource_monitor.end_step()
+        
+        # Save resource report if monitoring was enabled
+        if monitor_resources:
+            report_path = steps_dirs["final"] / "resource_report.json"
             try:
-                # Create credentials directory with proper permissions
-                creds_dir = Path("credentials")
-                creds_dir.mkdir(exist_ok=True, mode=0o777)
+                # Ensure output directory exists
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                resource_monitor.save_report(str(report_path))
                 
-                google_creds_file = creds_dir / "google_credentials.json"
+                # Add summary to log
+                summary = resource_monitor.get_summary()['summary']
+                logger.info(f"Process completed in {summary['time_seconds']}s using {summary['memory_mb']}MB of memory")
                 
-                # Get credentials JSON and ensure it's properly formatted
-                creds_json_str = os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
-                logger.info("Attempting to parse Google credentials...")
-                
-                # Try multiple parsing approaches
-                try:
-                    # First, try direct JSON parsing
-                    creds_json = json.loads(creds_json_str)
-                except json.JSONDecodeError as je:
-                    logger.warning(f"Direct JSON parsing failed: {je}")
-                    try:
-                        # Try cleaning the string and parsing again
-                        cleaned_str = creds_json_str.replace('\n', '\\n').replace('\r', '\\r')
-                        creds_json = json.loads(cleaned_str)
-                    except json.JSONDecodeError:
-                        logger.warning("Cleaned JSON parsing failed, trying literal eval")
-                        try:
-                            # Try literal eval as last resort
-                            import ast
-                            creds_json = ast.literal_eval(creds_json_str)
-                        except (SyntaxError, ValueError) as e:
-                            logger.error(f"All parsing attempts failed. Original error: {e}")
-                            # Log the first and last few characters of the string for debugging
-                            str_preview = f"{creds_json_str[:100]}...{creds_json_str[-100:]}" if len(creds_json_str) > 200 else creds_json_str
-                            logger.error(f"Credentials string preview: {str_preview}")
-                            raise ValueError("Could not parse Google credentials. Please check the format.")
-                
-                # Validate required fields
-                required_fields = [
-                    "type", "project_id", "private_key_id", "private_key",
-                    "client_email", "client_id", "auth_uri", "token_uri",
-                    "auth_provider_x509_cert_url", "client_x509_cert_url"
-                ]
-                missing_fields = [field for field in required_fields if field not in creds_json]
-                if missing_fields:
-                    raise ValueError(f"Missing required fields in credentials: {', '.join(missing_fields)}")
-                
-                # Ensure private key is properly formatted
-                if 'private_key' in creds_json:
-                    # Normalize line endings and ensure proper PEM format
-                    private_key = creds_json['private_key']
-                    if not private_key.startswith('-----BEGIN PRIVATE KEY-----'):
-                        private_key = f"-----BEGIN PRIVATE KEY-----\n{private_key}"
-                    if not private_key.endswith('-----END PRIVATE KEY-----'):
-                        private_key = f"{private_key}\n-----END PRIVATE KEY-----"
-                    creds_json['private_key'] = private_key.replace('\\n', '\n')
-                
-                # Write credentials file with proper permissions
-                with open(google_creds_file, 'w') as f:
-                    json.dump(creds_json, f, indent=2)
-                
-                # Set file permissions
-                google_creds_file.chmod(0o600)
-                
-                # Set environment variable to absolute path
-                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(google_creds_file.absolute())
-                logger.info("✓ Google credentials configured successfully")
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON format in credentials: {e}")
-                st.error("⚠️ Error: Google credentials JSON is not properly formatted. Please check the credential format.")
-                st.stop()
-            except ValueError as e:
-                logger.error(f"Invalid credentials content: {e}")
-                st.error(f"⚠️ Error: {str(e)}")
-                st.stop()
+                # Log difference between skip_analysis and regular mode
+                skip_status = "skipped" if skip_analysis else "performed"
+                logger.info(f"Frame analysis was {skip_status}")
             except Exception as e:
-                logger.error(f"Error setting up Google credentials: {e}")
-                st.error("⚠️ Error setting up Google credentials. Please check the logs for details.")
-                st.stop()
-
-        # Continue with the rest of the imports and initialization
-        logger.info("✓ Configuration loaded successfully")
-        loading_placeholder.success("✓ Configuration loaded successfully")
+                logger.warning(f"Could not save resource report: {str(e)}")
         
-        # Import required modules
-        import tempfile
-        import asyncio
-        import json
-        from datetime import datetime
-        import shutil
-        from telegram.ext import ContextTypes
-        from telegram import Bot
-        import gc
-        import tracemalloc
-        import psutil
+        # Stop resource monitoring
+        resource_monitor.stop()
         
-        from new_bot import VideoBot
-        from pipeline import Step_1_download_video, Step_7_cleanup
+        # Return final video path
+        final_video_path = video_result["output_path"]
+        logger.info(f"Processing complete! Final video available at: {final_video_path}")
         
-        # Initialize VideoBot with proper caching
-        @st.cache_resource(show_spinner=False)
-        def init_bot():
-            """Initialize the VideoBot instance with caching"""
-            try:
-                return VideoBot()
-            except Exception as e:
-                logger.error(f"Bot initialization error: {e}")
-                raise
-        
-        # Initialize bot instance
-        bot = init_bot()
-        
-        # Initialize session state
-        if 'initialized' not in st.session_state:
-            st.session_state.initialized = False
-            st.session_state.settings = bot.default_settings.copy()
-            st.session_state.is_processing = False
-            st.session_state.progress = 0
-            st.session_state.status = ""
-            st.session_state.initialized = True
-        
-        # Clear loading message
-        loading_placeholder.empty()
-        
-        # Safe cleanup function
-        def cleanup_memory(force=False):
-            """Force garbage collection and clear memory"""
-            try:
-                if force or not st.session_state.get('is_processing', False):
-                    gc.collect()
-                    
-                # Clear temp directories that are older than 1 hour
-                current_time = datetime.now().timestamp()
-                for pattern in ['temp_*', 'output_*']:
-                    for path in Path().glob(pattern):
-                        try:
-                            if path.is_dir():
-                                # Check if directory is older than 1 hour
-                                if current_time - path.stat().st_mtime > 3600:
-                                    shutil.rmtree(path, ignore_errors=True)
-                        except Exception as e:
-                            logger.warning(f"Failed to remove directory {path}: {e}")
-                
-                logger.info("Cleanup completed successfully")
-            except Exception as e:
-                logger.error(f"Error during cleanup: {e}")
-        
-        # Custom CSS with mobile responsiveness and centered content
-        st.markdown("""
-            <style>
-            /* Global responsive container */
-            .main {
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 1rem;
-            }
-
-            /* Responsive text sizing */
-            @media (max-width: 768px) {
-                h1 { font-size: 1.5rem !important; }
-                h2 { font-size: 1.3rem !important; }
-                p, div { font-size: 0.9rem !important; }
-            }
-
-            /* Center all content */
-            .stApp {
-                max-width: 100%;
-                margin: 0 auto;
-            }
-
-            /* Make tabs more mobile-friendly */
-            .stTabs [data-baseweb="tab-list"] {
-                gap: 8px;
-                flex-wrap: wrap;
-            }
-
-            .stTabs [data-baseweb="tab"] {
-                height: auto !important;
-                padding: 10px !important;
-                white-space: normal !important;
-                min-width: 120px;
-            }
-
-            /* Responsive video grid */
-            .sample-video-grid {
-                display: grid;
-                gap: 1rem;
-                width: 100%;
-                padding: 1rem;
-            }
-
-            /* Responsive grid breakpoints */
-            @media (min-width: 1200px) {
-                .sample-video-grid { grid-template-columns: repeat(3, 1fr); }
-            }
-            @media (min-width: 768px) and (max-width: 1199px) {
-                .sample-video-grid { grid-template-columns: repeat(2, 1fr); }
-            }
-            @media (max-width: 767px) {
-                .sample-video-grid { grid-template-columns: 1fr; }
-            }
-
-            /* Make all videos responsive and reel-sized */
-            .stVideo {
-                width: 100% !important;
-                height: auto !important;
-                max-width: 400px !important;
-                margin: 0 auto !important;
-            }
-
-            video {
-                width: 100% !important;
-                height: auto !important;
-                max-height: 80vh;
-                aspect-ratio: 9/16 !important;
-                object-fit: cover !important;
-                border-radius: 10px;
-                background: #000;
-            }
-
-            /* URL input and button styling */
-            .url-input-container {
-                width: 100%;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 1rem;
-            }
-
-            /* Style text inputs */
-            .stTextInput input {
-                width: 100%;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 0.5rem;
-                border-radius: 5px;
-            }
-
-            /* Style buttons */
-            .stButton button {
-                width: auto !important;
-                min-width: 150px;
-                max-width: 300px;
-                margin: 1rem auto !important;
-                padding: 0.5rem 1rem !important;
-                display: block !important;
-                border-radius: 5px;
-            }
-
-            /* Responsive sidebar */
-            @media (max-width: 768px) {
-                .css-1d391kg {
-                    width: 100% !important;
-                }
-            }
-
-            /* Loading and status messages */
-            .stAlert {
-                max-width: 600px;
-                margin: 1rem auto !important;
-            }
-
-            /* Center download button and style it */
-            .download-button-container {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                width: 100%;
-                margin: 1rem auto;
-                padding: 0.5rem;
-            }
-
-            .stDownloadButton {
-                display: flex !important;
-                justify-content: center !important;
-                margin: 1rem auto !important;
-            }
-
-            .stDownloadButton > button {
-                background-color: #FF4B4B !important;
-                color: white !important;
-                padding: 0.5rem 2rem !important;
-                border-radius: 25px !important;
-                font-weight: 600 !important;
-                transition: all 0.3s ease !important;
-                border: none !important;
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
-            }
-
-            .stDownloadButton > button:hover {
-                background-color: #FF3333 !important;
-                transform: translateY(-2px) !important;
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2) !important;
-            }
-
-            /* Video card styling */
-            .sample-video-card {
-                background: rgba(255, 255, 255, 0.05);
-                border-radius: 10px;
-                padding: 1rem;
-                width: 100%;
-                max-width: 400px;
-                margin: 0 auto;
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                transition: transform 0.2s;
-            }
-
-            /* Generated video container */
-            .generated-video-container {
-                width: 100%;
-                max-width: 400px;
-                margin: 2rem auto;
-                padding: 1rem;
-            }
-
-            /* Center all content and animations */
-            .stApp {
-                max-width: 100%;
-                margin: 0 auto;
-                text-align: center;
-            }
-
-            /* Center status messages and emojis */
-            .stMarkdown {
-                text-align: center;
-            }
-            
-            /* Make status messages stand out */
-            .status-message {
-                background-color: rgba(255, 255, 255, 0.1);
-                padding: 1rem;
-                border-radius: 10px;
-                margin: 1rem auto;
-                max-width: 600px;
-                text-align: center;
-            }
-
-            /* Video duration warning */
-            .duration-warning {
-                color: #ff4b4b;
-                background-color: rgba(255, 75, 75, 0.1);
-                padding: 0.5rem;
-                border-radius: 5px;
-                margin: 0.5rem auto;
-                max-width: 600px;
-                font-weight: bold;
-                text-align: center;
-            }
-
-            /* Center emojis and make them larger */
-            .emoji-large {
-                font-size: 2rem;
-                text-align: center;
-                display: block;
-                margin: 1rem auto;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        # Title and description
-        st.title("🎬 AI Video Commentary Bot")
-        st.markdown("<div class='emoji-large'>✨</div>", unsafe_allow_html=True)
-        st.markdown("""
-            Transform your videos with AI-powered commentary in multiple styles and languages.
-            Upload a video or provide a URL to get started!
-        """)
-        
-        # Add duration warning
-        st.markdown("<div class='duration-warning'>⚠️ Videos must be 2 minutes or shorter</div>", unsafe_allow_html=True)
-        
-        # Update status messages to use centered styling
-        if st.session_state.get('status'):
-            st.markdown(f"<div class='status-message'>{st.session_state.status}</div>", unsafe_allow_html=True)
-        
-        # Sidebar for settings
-        with st.sidebar:
-            st.header("⚙️ Settings")
-            
-            # AI Model selection first
-            st.subheader("AI Model")
-            llm = st.selectbox(
-                "Choose AI model",
-                options=["openai", "deepseek"],
-                format_func=lambda x: "🧠 OpenAI GPT-4" if x == "openai" else "🤖 Deepseek",
-                key="llm"
-            )
-            
-            # Language selection with model compatibility check
-            st.subheader("Language")
-            available_languages = ["en", "ur"] if llm == "openai" else ["en"]
-            language = st.selectbox(
-                "Choose language",
-                options=available_languages,
-                format_func=lambda x: {
-                    "en": "🇬🇧 English - Default language",
-                    "ur": "🇵🇰 Urdu - اردو"
-                }[x],
-                key="language"
-            )
-            
-            # Add warning if trying to use Urdu with Deepseek
-            if llm == "deepseek" and language == "ur":
-                st.warning("⚠️ Urdu language requires OpenAI GPT-4")
-            
-            # Style selection
-            st.subheader("Commentary Style")
-            style = st.selectbox(
-                "Choose your style",
-                options=["news", "funny", "nature", "infographic"],
-                format_func=lambda x: {
-                    "news": "📰 News - Professional reporting",
-                    "funny": "😄 Funny - Humorous commentary",
-                    "nature": "🌿 Nature - Documentary style",
-                    "infographic": "📊 Infographic - Educational"
-                }[x],
-                key="style"
-            )
-            
-            # Add style description
-            style_descriptions = {
-                "news": "Clear, objective reporting with professional tone",
-                "funny": "Light-hearted, entertaining commentary with humor",
-                "nature": "Descriptive narration with scientific insights",
-                "infographic": "Educational content with clear explanations"
-            }
-            st.caption(style_descriptions[style])
-            
-            # Update settings in session state and bot's user settings
-            user_id = 0  # Default user ID for Streamlit interface
-            init_bot().update_user_setting(user_id, 'style', style)
-            init_bot().update_user_setting(user_id, 'llm', llm)
-            init_bot().update_user_setting(user_id, 'language', language)
-            st.session_state.settings = init_bot().get_user_settings(user_id)
-        
-        # Add these classes and process_video function before the tab sections
-        class StreamlitMessage:
-            """Mock Telegram message for status updates"""
-            def __init__(self):
-                self.message_id = 0
-                self.text = ""
-                self.video = None
-                self.file_id = None
-                self.file_name = None
-                self.mime_type = None
-                self.file_size = None
-                self.download_placeholder = st.empty()
-                self.video_placeholder = st.empty()
-                self.status_placeholder = st.empty()
-                self.output_filename = None
-                
-            async def reply_text(self, text, **kwargs):
-                logger.info(f"Status update: {text}")
-                self.text = text
-                st.session_state.status = text
-                self.status_placeholder.markdown(f"🔄 {text}")
-                return self
-                
-            async def edit_text(self, text, **kwargs):
-                return await self.reply_text(text)
-                
-            async def reply_video(self, video, caption=None, **kwargs):
-                logger.info("Handling video reply")
-                try:
-                    if hasattr(video, 'read'):
-                        video_data = video.read()
-                        self.output_filename = getattr(video, 'name', None)
-                    elif isinstance(video, str) and os.path.exists(video):
-                        self.output_filename = video
-                        with open(video, 'rb') as f:
-                            video_data = f.read()
-                    else:
-                        logger.error("Invalid video format")
-                        st.error("Invalid video format")
-                        return self
-                    
-                    # Store video data in session state
-                    st.session_state.processed_video = video_data
-                    
-                    # Display video with download button
-                    self.video_placeholder.markdown("<div class='generated-video-container'>", unsafe_allow_html=True)
-                    if caption:
-                        self.video_placeholder.markdown(f"### {caption}")
-                    self.video_placeholder.video(video_data)
-                    
-                    # Add download button with unique key
-                    self.video_placeholder.download_button(
-                        label="⬇️ Download Enhanced Video",
-                        data=video_data,
-                        file_name="enhanced_video.mp4",
-                        mime="video/mp4",
-                        help="Click to download the enhanced video with AI commentary",
-                        key="download_button_reply"
-                    )
-                    
-                    self.video_placeholder.markdown("</div>", unsafe_allow_html=True)
-                    return self
-                    
-                except Exception as e:
-                    logger.error(f"Error in reply_video: {str(e)}")
-                    st.error(f"Error displaying video: {str(e)}")
-                    return self
-
-        class StreamlitUpdate:
-            """Mock Telegram Update for bot compatibility"""
-            def __init__(self):
-                logger.info("Initializing StreamlitUpdate")
-                self.effective_user = type('User', (), {'id': 0})
-                self.message = StreamlitMessage()
-                self.effective_message = self.message
-
-        class StreamlitContext:
-            """Mock Telegram context"""
-            def __init__(self):
-                logger.info("Initializing StreamlitContext")
-                self.bot = type('MockBot', (), {
-                    'get_file': lambda *args, **kwargs: None,
-                    'send_message': lambda *args, **kwargs: None,
-                    'edit_message_text': lambda *args, **kwargs: None,
-                    'send_video': lambda *args, **kwargs: None,
-                    'send_document': lambda *args, **kwargs: None
-                })()
-                self.args = []
-                self.matches = None
-                self.user_data = {}
-                self.chat_data = {}
-                self.bot_data = {}
-
-        async def process_video():
-            # Check if already processing and reset if stuck
-            if st.session_state.is_processing:
-                # If stuck for more than 5 minutes, reset
-                if hasattr(st.session_state, 'processing_start_time'):
-                    if (datetime.now() - st.session_state.processing_start_time).total_seconds() > 300:
-                        st.session_state.is_processing = False
-                        logger.warning("Reset stuck processing state")
-                    else:
-                        st.warning("⚠️ Already processing a video. Please wait.")
-                        return
-                else:
-                    st.session_state.is_processing = False
-            
-            try:
-                # Set processing start time
-                st.session_state.processing_start_time = datetime.now()
-                st.session_state.is_processing = True
-                
-                update = StreamlitUpdate()
-                context = StreamlitContext()
-                
-                # Create placeholders for status and video
-                status_placeholder = st.empty()
-                video_container = st.empty()
-                
-                # Show processing status
-                status_placeholder.info("🎬 Starting video processing...")
-                
-                if video_url:
-                    logger.info(f"Processing video URL: {video_url}")
-                    await bot.process_video_from_url(update, context, video_url)
-                elif uploaded_file:
-                    logger.info(f"Processing uploaded file: {uploaded_file.name}")
-                    status_placeholder.info("📥 Processing uploaded video...")
-                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
-                        tmp.write(uploaded_file.getbuffer())
-                        await bot.process_video_file(update, context, tmp.name, update.message)
-                
-                # Check if video was processed successfully
-                if st.session_state.get('processed_video'):
-                    status_placeholder.success("✅ Processing complete!")
-                else:
-                    logger.error("No video data found after processing")
-                    status_placeholder.error("❌ Failed to generate video")
-                
-            except Exception as e:
-                logger.error(f"Error processing video: {str(e)}")
-                status_placeholder.error(f"❌ Error processing video: {str(e)}")
-            finally:
-                # Clear processing state
-                st.session_state.is_processing = False
-                if hasattr(st.session_state, 'processing_start_time'):
-                    delattr(st.session_state, 'processing_start_time')
-                cleanup_memory(force=True)
-
-        # Main content area with responsive containers
-        tab1, tab2 = st.tabs(["🔗 Video URL", "🎥 Sample Videos"])
-        
-        # Video URL Tab
-        with tab1:
-            st.markdown("<div class='url-input-container'>", unsafe_allow_html=True)
-            video_url = st.text_input(
-                "Enter video URL",
-                placeholder="https://example.com/video.mp4",
-                help="Support for YouTube, Vimeo, TikTok, and more",
-                label_visibility="collapsed"
-            )
-            
-            if video_url:
-                if st.button("Process URL", key="process_url"):
-                    if not video_url.startswith(('http://', 'https://')):
-                        st.error("❌ Please provide a valid URL starting with http:// or https://")
-                    else:
-                        try:
-                            if not st.session_state.is_processing:
-                                st.session_state.progress = 0
-                                st.session_state.status = "Starting video processing..."
-                                asyncio.run(process_video())
-                            else:
-                                st.warning("⚠️ Already processing a video. Please wait.")
-                        except Exception as e:
-                            logger.error(f"Error in process_url: {str(e)}")
-                            st.error("❌ Failed to process video URL. Please try again.")
-                            st.session_state.is_processing = False
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-        # Sample Videos Tab
-        with tab2:
-            st.markdown("<div class='sample-video-grid'>", unsafe_allow_html=True)
-            
-            # Get list of sample videos
-            sample_videos_dir = Path("sample_generated_videos")
-            if sample_videos_dir.exists():
-                sample_videos = list(sample_videos_dir.glob("*.mp4"))
-                
-                # Display each sample video in a card
-                for video_path in sample_videos:
-                    st.markdown("<div class='sample-video-card'>", unsafe_allow_html=True)
-                    st.video(str(video_path))
-                    st.markdown("</div>", unsafe_allow_html=True)
-            else:
-                st.info("No sample videos available")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Add memory monitoring
-        if st.sidebar.checkbox("Show Memory Usage"):
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            st.sidebar.write(f"Memory Usage: {memory_info.rss / 1024 / 1024:.2f} MB")
-            if st.sidebar.button("Force Cleanup"):
-                cleanup_memory()
-                st.sidebar.success("Memory cleaned up!")
-        
-        # Add this section after the tabs to ensure video persists
-        if st.session_state.get('processed_video'):
-            st.markdown("<div class='generated-video-container'>", unsafe_allow_html=True)
-            st.video(st.session_state.processed_video)
-            st.markdown("<div class='download-button-container'>", unsafe_allow_html=True)
-            st.download_button(
-                label="⬇️ Download Enhanced Video",
-                data=st.session_state.processed_video,
-                file_name="enhanced_video.mp4",
-                mime="video/mp4",
-                help="Click to download the enhanced video with AI commentary",
-                key="download_button_persist"
-            )
-            st.markdown("</div></div>", unsafe_allow_html=True)
-        
-        # Help section
-        with st.expander("ℹ️ Help & Information"):
-            st.markdown("""
-                ### How to Use
-                1. Choose your preferred settings in the sidebar
-                2. Upload a video file or provide a video URL
-                3. Click the process button and wait for the magic!
-                
-                ### Features
-                - Multiple commentary styles
-                - Support for different languages
-                - Choice of AI models
-                - Professional voice synthesis
-                
-                ### Limitations
-                - Maximum video size: 50MB
-                - Maximum duration: 5 minutes
-                - Supported formats: MP4, MOV, AVI
-                
-                ### Need Help?
-                If you encounter any issues, try:
-                - Using a shorter video
-                - Converting your video to MP4 format
-                - Checking your internet connection
-                - Refreshing the page
-            """)
+        return final_video_path
         
     except Exception as e:
-        logger.error(f"Initialization error: {e}", exc_info=True)
-        st.error(f"⚠️ Failed to initialize application: {str(e)}")
-        st.stop()
+        # Stop resource monitoring on error
+        resource_monitor.stop()
+        logger.error(f"Error processing video: {str(e)}")
+        return {"error": str(e)}
+
+# Set page configuration
+st.set_page_config(
+    page_title="Video Commentary Bot",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main {
+        padding: 2rem;
+    }
+    .stButton button {
+        width: 100%;
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px;
+        font-size: 16px;
+        border-radius: 5px;
+    }
+    .stProgress > div > div {
+        background-color: #4CAF50;
+    }
+    .output-video {
+        width: 100%;
+        border-radius: 10px;
+    }
+    .watermark-options {
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 5px;
+        margin-top: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Define language options
+LANGUAGE_OPTIONS = {
+    "English (US)": "en",
+    "English (UK)": "en-GB",
+    "English (Australia)": "en-AU", 
+    "English (India)": "en-IN",
+    "Urdu": "ur",
+    "Bengali": "bn",
+    "Hindi": "hi",
+    "Turkish": "tr",
+}
+
+# Define commentary style options based on supported backend styles
+STYLE_OPTIONS = [
+    "news", "funny", "nature", "documentary", "informative"
+]
+
+# Define font options
+FONT_OPTIONS = [
+    "Arial", "Times New Roman", "Verdana", "Comic Sans MS", "Impact", 
+    "Courier New", "Tahoma", "Trebuchet MS", "Georgia", "Garamond"
+]
+
+# Define color options with nice predefined colors
+COLOR_OPTIONS = {
+    "White": "white",
+    "Black": "black", 
+    "Red": "red",
+    "Blue": "blue",
+    "Green": "green",
+    "Yellow": "yellow",
+    "Cyan": "cyan",
+    "Magenta": "magenta",
+    "Orange": "orange",
+    "Purple": "purple",
+    "Pink": "pink",
+    "Gold": "gold",
+    "Silver": "silver",
+    "Lime": "lime",
+    "Teal": "teal"
+}
+
+# Title and description
+st.title("🎬 Video Commentary Bot")
+st.markdown("""
+Generate AI-powered commentary for any video. Just enter a URL and customize your settings!
+""")
+
+# Create two columns for inputs
+col1, col2 = st.columns(2)
+
+with col1:
+    # Video URL input
+    video_url = st.text_input(
+        "Video URL",
+        placeholder="Enter YouTube, Twitter, or direct video URL",
+        help="Supports YouTube, Twitter/X, and direct video links"
+    )
+    
+    # Commentary language
+    lang_name = st.selectbox(
+        "Commentary Language",
+        options=list(LANGUAGE_OPTIONS.keys()),
+        index=0,
+        help="Select the language for your commentary. Full support for English, Urdu, Bengali, Hindi, and Turkish."
+    )
+    language = LANGUAGE_OPTIONS[lang_name]
+    
+    # Commentary style
+    style = st.selectbox(
+        "Commentary Style",
+        options=STYLE_OPTIONS,
+        index=0,
+        help="Select the style of commentary to generate. Options include news reporting, funny commentary, nature documentary, or informative explanation."
+    )
+
+with col2:
+    # Output directory
+    output_dir = st.text_input(
+        "Output Directory",
+        value="./output",
+        help="Directory where processed videos will be saved"
+    )
+    
+    # Advanced options
+    with st.expander("Advanced Options"):
+        col1, col2 = st.columns(2)
         
-except Exception as e:
-    logger.error(f"Critical error: {e}", exc_info=True)
-    # If streamlit itself fails to import or initialize
-    print(f"Critical error: {e}")
-    sys.exit(1) 
+        with col1:
+            preserve_temp = st.checkbox(
+                "Preserve Temporary Files",
+                value=True,  # Changed to true by default to avoid cleanup issues
+                help="Keep intermediate files generated during processing"
+            )
+            
+            skip_analysis = st.checkbox(
+                "Skip Frame Analysis",
+                value=False,
+                help="Skip the AI scene analysis step (faster but less detailed commentary)"
+            )
+        
+        with col2:
+            no_cleanup = st.checkbox(
+                "Skip Cleanup",
+                value=True,  # Changed to true by default to avoid cleanup issues
+                help="Skip the cleanup step after processing"
+            )
+            
+            monitor_resources = st.checkbox(
+                "Monitor Resource Usage",
+                value=False,
+                help="Track processing time and memory usage for each step"
+            )
+            
+            if monitor_resources:
+                st.info("Resource usage report will be saved in the output directory")
+
+    # Watermark options
+    with st.expander("Watermark Options"):
+        enable_watermark = st.checkbox(
+            "Add Watermark Text",
+            value=False,
+            help="Add a text watermark to the center of the video"
+        )
+        
+        if enable_watermark:
+            # Container with background color for watermark options
+            with st.container():
+                st.markdown('<div class="watermark-options">', unsafe_allow_html=True)
+                
+                # Watermark text
+                watermark_text = st.text_input(
+                    "Watermark Text",
+                    value="© Video Commentary Bot",
+                    help="Text to display as watermark in the center of the video"
+                )
+                
+                # Create two columns for size and color
+                wm_col1, wm_col2 = st.columns(2)
+                
+                with wm_col1:
+                    # Watermark size
+                    watermark_size = st.slider(
+                        "Font Size",
+                        min_value=12,
+                        max_value=72,
+                        value=36,
+                        step=2,
+                        help="Size of the watermark text"
+                    )
+                
+                with wm_col2:
+                    # Watermark color
+                    color_name = st.selectbox(
+                        "Text Color",
+                        options=list(COLOR_OPTIONS.keys()),
+                        index=0,
+                        help="Color of the watermark text"
+                    )
+                    watermark_color = COLOR_OPTIONS[color_name]
+                
+                # Watermark font
+                watermark_font = st.selectbox(
+                    "Font",
+                    options=FONT_OPTIONS,
+                    index=0,
+                    help="Font to use for the watermark text"
+                )
+                
+                # Preview of watermark
+                st.markdown(
+                    f"<div style='text-align:center; padding:10px; margin:10px 0; "
+                    f"background-color:rgba(0,0,0,0.5); color:{watermark_color}; "
+                    f"font-family:{watermark_font}; font-size:{watermark_size}px;'>"
+                    f"{watermark_text}</div>", 
+                    unsafe_allow_html=True
+                )
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            watermark_text = None
+            watermark_size = 36
+            watermark_color = "white"
+            watermark_font = "Arial"
+
+# Submit button
+if st.button("Generate Commentary"):
+    if not video_url:
+        st.error("Please enter a video URL")
+    else:
+        # Create a progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Create a placeholder for the final video
+        video_placeholder = st.empty()
+        
+        try:
+            # Define async function to update progress while processing
+            async def process_with_progress():
+                # Initialize progress stages
+                stages = [
+                    "Downloading video",
+                    "Extracting frames"
+                ]
+                
+                # Only include analysis stage if not skipped
+                if not skip_analysis:
+                    stages.append("Analyzing frames")
+                
+                # Add remaining stages
+                stages.extend([
+                    "Generating commentary",
+                    "Creating audio",
+                    "Rendering final video",
+                    "Finalizing"
+                ])
+                
+                # Show initial stages information
+                if skip_analysis:
+                    st.info("Skipping frame analysis for faster processing")
+                
+                # Log critical parameters
+                st.session_state["params"] = {
+                    "video_url": video_url,
+                    "language": language,
+                    "style": style,
+                    "skip_analysis": skip_analysis,
+                    "monitor_resources": monitor_resources
+                }
+                
+                # Create task for video processing
+                task = asyncio.create_task(
+                    process_video(
+                        video_url=video_url,
+                        output_dir=output_dir,
+                        language=language,
+                        commentary_style=style,
+                        preserve_temp=True,  # Always preserve temp files for Streamlit
+                        cleanup_temp=False,   # Disable cleanup to ensure files persist
+                        watermark_text=watermark_text if enable_watermark else None,
+                        watermark_size=watermark_size,
+                        watermark_color=watermark_color,
+                        watermark_font=watermark_font,
+                        skip_analysis=skip_analysis,
+                        monitor_resources=monitor_resources
+                    )
+                )
+                
+                # Update progress while task is running
+                for i, stage in enumerate(stages):
+                    progress = (i / len(stages))
+                    progress_bar.progress(progress)
+                    status_text.text(f"Status: {stage}...")
+                    
+                    # Wait a bit to simulate progress
+                    await asyncio.sleep(1)
+                    
+                    # Check if task is done, and if so, break
+                    if task.done():
+                        break
+                
+                # Wait for task to complete if it hasn't already
+                result = await task
+                
+                # Final progress update
+                progress_bar.progress(1.0)
+                status_text.text("Status: Completed!")
+                
+                return result
+            
+            # Run the async function
+            result = asyncio.run(process_with_progress())
+            
+            # Check if result is a dictionary with an error
+            if isinstance(result, dict) and "error" in result:
+                st.error(f"Error processing video: {result['error']}")
+            else:
+                # Display success message
+                st.success(f"Processing completed successfully!")
+                
+                # Get the final video path
+                final_video_path = str(result)
+                
+                if os.path.exists(final_video_path):
+                    # Create a download button for the video
+                    with open(final_video_path, "rb") as file:
+                        file_name = os.path.basename(final_video_path)
+                        st.download_button(
+                            label="Download Video",
+                            data=file,
+                            file_name=file_name,
+                            mime="video/mp4"
+                        )
+                    
+                    # Display the video in the app
+                    video_placeholder.video(final_video_path)
+                else:
+                    # If the specific path doesn't exist, try to find the video in output directories
+                    st.warning(f"Video file not found at path: {final_video_path}")
+                    
+                    # Search for final video files
+                    output_path = Path(output_dir)
+                    final_videos = []
+                    for job_dir in output_path.glob("*"):
+                        final_dir = job_dir / "06_final"
+                        if final_dir.exists():
+                            videos = list(final_dir.glob("*.mp4"))
+                            final_videos.extend(videos)
+                    
+                    if final_videos:
+                        # Get most recent video
+                        most_recent = max(final_videos, key=os.path.getmtime)
+                        st.info(f"Found alternative video file: {most_recent}")
+                        
+                        # Create download button for the found video
+                        with open(most_recent, "rb") as file:
+                            file_name = os.path.basename(most_recent)
+                            st.download_button(
+                                label="Download Video",
+                                data=file,
+                                file_name=file_name,
+                                mime="video/mp4"
+                            )
+                        
+                        # Display the video in the app
+                        video_placeholder.video(str(most_recent))
+                    else:
+                        st.error("No video files found in output directory")
+                
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
+
+# Add information about the pipeline
+with st.expander("About the Pipeline"):
+    st.markdown("""
+    ### Video Commentary Bot Pipeline
+    
+    This tool processes videos through a 6-step pipeline:
+    
+    1. **Download Video**: Handles YouTube, Twitter, and direct video URLs
+    2. **Extract Frames**: Uses OpenCV to extract key frames from the video
+    3. **Analyze Frames**: Uses Qwen Vision API for detailed scene understanding (optional)
+    4. **Generate Commentary**: Uses Qwen LLMs for English commentary and translates to other languages if needed
+    5. **Generate Audio**: Uses Google TTS for speech synthesis with extensive voice options
+    6. **Generate Video**: Combines the original video with the generated audio
+    
+    ### Features
+    
+    - Multi-language support with high-quality TTS voices
+    - Different commentary styles to match your content
+    - Watermark option for adding custom text to videos
+    - Optional AI scene detection for context-aware commentary
+    
+    ### Performance Options
+    
+    - **Skip Frame Analysis**: Bypass the AI scene analysis for faster processing but less detailed commentary
+    
+    ### Supported Languages
+    
+    - English (US, UK, Australia, India variants)
+    - Urdu
+    - Bengali
+    - Hindi
+    - Turkish
+    
+    ### Supported Commentary Styles
+    
+    - **News**: Formal journalistic style with objective reporting
+    - **Funny**: Humorous commentary with witty observations
+    - **Nature**: Nature documentary style with descriptive language
+    - **Documentary**: Balanced educational and entertaining narration
+    - **Informative**: Clear explanations focused on educational content
+    """)
+
+# Instructions for first-time setup
+with st.sidebar:
+    st.header("First-time Setup")
+    st.markdown("""
+    Before using this application, make sure you have:
+    
+    1. Installed all required dependencies:
+    ```
+    pip install streamlit google-cloud-texttospeech opencv-python yt-dlp openai dashscope tqdm
+    ```
+    
+    2. Set up the following API keys as environment variables:
+    ```
+    OPENAI_API_KEY - For translations
+    DASHSCOPE_API_KEY - For Qwen models
+    ```
+    
+    3. Added your Google Cloud credentials JSON file to the root directory
+    """)
+    
+    # Add a button to check environment setup
+    if st.button("Check Environment Setup"):
+        # Check installed packages
+        packages = ["streamlit", "google-cloud-texttospeech", "opencv-python", "yt-dlp", "openai", "dashscope"]
+        missing_packages = []
+        
+        for package in packages:
+            try:
+                __import__(package)
+            except ImportError:
+                missing_packages.append(package)
+        
+        if missing_packages:
+            st.error(f"Missing packages: {', '.join(missing_packages)}")
+        else:
+            st.success("All required packages are installed")
+        
+        # Check API keys
+        if not os.getenv("OPENAI_API_KEY"):
+            st.warning("OPENAI_API_KEY environment variable not set")
+        else:
+            st.success("OPENAI_API_KEY environment variable is set")
+            
+        if not os.getenv("DASHSCOPE_API_KEY"):
+            st.warning("DASHSCOPE_API_KEY environment variable not set")
+        else:
+            st.success("DASHSCOPE_API_KEY environment variable is set")
+        
+        # Check Google credentials file
+        if not os.path.exists("google_credentials.json"):
+            st.warning("google_credentials.json file not found in the root directory")
+        else:
+            st.success("google_credentials.json file found")
+            
+    st.markdown("---")
+    st.markdown("Made with ❤️ using Streamlit and AI") 

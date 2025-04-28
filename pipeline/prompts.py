@@ -15,6 +15,7 @@ class LLMProvider(Enum):
     """Available LLM providers."""
     OPENAI = "openai"
     DEEPSEEK = "deepseek"
+    QWEN = "qwen"
 
 class PromptTemplate:
     """Class to manage prompt templates."""
@@ -25,9 +26,10 @@ class PromptTemplate:
 class PromptManager:
     """Manager for handling prompts and LLM interactions."""
     
-    def __init__(self, provider: LLMProvider = LLMProvider.OPENAI):
-        """Initialize the prompt manager with a specific provider."""
+    def __init__(self, provider: LLMProvider = LLMProvider.QWEN, language: str = 'en'):
+        """Initialize the prompt manager with a specific provider and language."""
         self.provider = provider
+        self.language = language
         self.client = None
         self._setup_client()
         
@@ -35,21 +37,44 @@ class PromptManager:
         """Setup the appropriate client based on provider."""
         try:
             if self.provider == LLMProvider.OPENAI:
+                # Use minimal parameters to avoid issues
                 self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
             elif self.provider == LLMProvider.DEEPSEEK:
+                # Use minimal parameters to avoid issues
                 self.client = OpenAI(
                     api_key=os.getenv('DEEPSEEK_API_KEY'),
                     base_url="https://api.deepseek.com/v1"
+                )
+            elif self.provider == LLMProvider.QWEN:
+                # Use minimal parameters to avoid issues
+                self.client = OpenAI(
+                    api_key=os.getenv('DASHSCOPE_API_KEY'),
+                    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
                 )
         except Exception as e:
             logger.error(f"Error setting up {self.provider.value} client: {str(e)}")
             raise
 
-    def generate_response(self, messages: list, model: str = "gpt-4o-mini", **kwargs) -> str:
+    def _select_provider(self, language: str = 'en') -> LLMProvider:
+        """Select appropriate provider based on language and configuration."""
+        if language == 'en':
+            return LLMProvider.QWEN
+        else:
+            return LLMProvider.OPENAI
+
+    def generate_response(self, messages: list, model: str = None, **kwargs) -> str:
         """Generate response using the selected provider."""
         try:
             if not self.client:
                 raise ValueError(f"{self.provider.value} client not initialized")
+
+            if model is None:
+                if self.provider == LLMProvider.QWEN:
+                    model = "qwen-plus"
+                elif self.provider == LLMProvider.OPENAI:
+                    model = "gpt-4o-mini"
+                elif self.provider == LLMProvider.DEEPSEEK:
+                    model = "deepseek-chat"
 
             response = self.client.chat.completions.create(
                 model=model,
@@ -62,6 +87,36 @@ class PromptManager:
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             raise
+
+    async def translate_text(self, text: str, source_language: str = 'en', target_language: str = 'ur') -> str:
+        """
+        Translate text from source language to target language.
+        Uses OpenAI exclusively for translation purposes.
+        """
+        if source_language == target_language:
+            return text
+            
+        try:
+            original_provider = self.provider
+            self.provider = LLMProvider.OPENAI
+            self._setup_client()
+            
+            response = self.generate_response(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"You are a professional translator from {source_language} to {target_language}."},
+                    {"role": "user", "content": f"Translate the following text to {target_language}, preserving the style and meaning:\n\n{text}"}
+                ],
+                temperature=0.3
+            )
+            
+            self.provider = original_provider
+            self._setup_client()
+            
+            return response
+        except Exception as e:
+            logger.error(f"Translation error: {str(e)}")
+            return text
 
 # Commentary style templates
 COMMENTARY_STYLES = {

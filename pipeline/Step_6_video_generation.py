@@ -7,19 +7,29 @@ import os
 import logging
 import re
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Union, Tuple
 import subprocess
 import json
 import shutil
+import sys
+import math
 
 logger = logging.getLogger(__name__)
 
 class VideoGenerator:
     """Handles video generation and audio overlay using FFmpeg."""
     
-    def __init__(self):
-        """Initialize the VideoGenerator."""
+    def __init__(self, context):
+        """Initialize the VideoGenerator.
+        
+        Args:
+            context: The pipeline context
+        """
         self._verify_ffmpeg()
+        self.context = context
+        self.video_input_dir = context.get_step_output_dir(1) / "video"
+        self.audio_input_dir = context.get_step_output_dir(5)
+        self.output_dir = context.create_step_dir("06_final")
         
     def _verify_ffmpeg(self):
         """Verify FFmpeg is installed and accessible."""
@@ -88,12 +98,72 @@ class VideoGenerator:
             logger.warning(f"Could not get audio duration: {e}")
             return 0.0
 
-    async def generate_video(
+    def generate_video(
+        self,
+        style: str = "default", 
+        watermark_text: str = None,
+        watermark_size: int = 36,
+        watermark_color: str = "white",
+        watermark_font: str = "Arial"
+    ) -> Optional[Path]:
+        """Generate final video with commentary audio.
+        
+        Args:
+            style: The commentary style
+            watermark_text: Optional text to display as watermark
+            watermark_size: Font size for watermark text
+            watermark_color: Color of the watermark text
+            watermark_font: Font to use for watermark
+            
+        Returns:
+            Path to the generated video file
+        """
+        try:
+            # Get video file from context - first video in the video directory
+            video_files = list(self.video_input_dir.glob("*.mp4"))
+            if not video_files:
+                raise FileNotFoundError("No video files found in input directory")
+            video_path = str(video_files[0].absolute())
+            
+            # Get audio file
+            audio_path = str((self.audio_input_dir / f"commentary_{style}.wav").absolute())
+            
+            # Generate output path
+            output_path = self.output_dir / f"final_video_{style}.mp4"
+            
+            # Check if watermark parameters are in context state
+            if 'watermark' in self.context.state:
+                watermark_text = self.context.state.get('watermark_text', watermark_text)
+                watermark_size = self.context.state.get('watermark_size', watermark_size)
+                watermark_color = self.context.state.get('watermark_color', watermark_color)
+                watermark_font = self.context.state.get('watermark_font', watermark_font)
+            
+            # Call the generate_video method with all required parameters
+            return self._generate_video(
+                video_path=video_path,
+                audio_path=audio_path,
+                output_path=output_path,
+                style_name=style,
+                watermark_text=watermark_text,
+                watermark_size=watermark_size,
+                watermark_color=watermark_color,
+                watermark_font=watermark_font
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating video: {str(e)}")
+            return None
+
+    def _generate_video(
         self,
         video_path: str,
         audio_path: str,
         output_path: Path,
-        style_name: str = None
+        style_name: str = None,
+        watermark_text: str = None,
+        watermark_size: int = 36,
+        watermark_color: str = "white",
+        watermark_font: str = "Arial"
     ) -> Optional[Path]:
         """Generate final video with optimized processing."""
         try:
@@ -137,30 +207,56 @@ class VideoGenerator:
             pad_x = (target_width - scale_width) // 2
             pad_y = (target_height - scale_height) // 2
             
-            # Build FFmpeg command with improved stability
+            # Build filter complex with optional watermark
+            if watermark_text:
+                logger.info(f"Adding watermark text: '{watermark_text}', size: {watermark_size}, color: {watermark_color}, font: {watermark_font}")
+                
+                # Escape special characters in watermark text for drawtext filter
+                escaped_text = watermark_text.replace("'", "\\'").replace(":", "\\:")
+                
+                # Add drawtext filter for watermark
+                filter_complex = (
+                    f'[0:v]scale={scale_width}:{scale_height}:flags=lanczos,'
+                    f'pad={target_width}:{target_height}:{pad_x}:{pad_y}:color=black,'
+                    f'drawtext=text=\'{escaped_text}\':'
+                    f'fontfile={watermark_font}:'
+                    f'fontsize={watermark_size}:'
+                    f'fontcolor={watermark_color}:'
+                    f'x=(w-text_w)/2:y=(h-text_h)/2:'
+                    f'shadowcolor=black:shadowx=2:shadowy=2[v];'
+                    f'[0:a]volume=1[original];[1:a]volume=0.7[commentary];'
+                    f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'
+                    f'[ducked][commentary]amix=inputs=2:duration=longest[audio]'
+                )
+            else:
+                # Standard filter without watermark
+                filter_complex = (
+                    f'[0:v]scale={scale_width}:{scale_height}:flags=lanczos,'
+                    f'pad={target_width}:{target_height}:{pad_x}:{pad_y}:color=black[v];'
+                    f'[0:a]volume=1[original];[1:a]volume=0.7[commentary];'
+                    f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'
+                    f'[ducked][commentary]amix=inputs=2:duration=longest[audio]'
+                )
+            
+            # Build FFmpeg command
             cmd = [
                 'ffmpeg',
                 '-y',  # Overwrite output
                 '-i', video_path,
                 '-i', audio_path,
-                '-filter_complex',
-                f'[0:v]scale={scale_width}:{scale_height}:flags=lanczos,pad={target_width}:{target_height}:{pad_x}:{pad_y}:color=white[v];'
-                f'[0:a]volume=1[original];'
-                f'[1:a]volume=0.7[commentary];'
-                f'[original]volume=0.3:enable=\'between(t,0,{commentary_duration})\':eval=frame[ducked];'
-                '[ducked][commentary]amix=inputs=2:duration=longest[audio]',
-                '-map', '[v]',
+                '-filter_complex', filter_complex,
+                '-map', '[v]',  # Always map to [v] output from filter complex
                 '-map', '[audio]',
                 '-c:v', 'libx264',
-                '-preset', 'medium',  # Balance between speed and quality
-                '-crf', '23',  # Maintain high quality
-                '-maxrate', '4M',  # Allow higher bitrate for quality
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '4M',
                 '-bufsize', '8M',
                 '-c:a', 'aac',
-                '-b:a', '192k',  # Good audio quality
+                '-b:a', '192k',
                 '-ac', '2',
                 '-ar', '44100',
-                '-max_muxing_queue_size', '2048',  # Increased queue size
+                '-max_muxing_queue_size', '2048',
                 '-movflags', '+faststart',
                 str(output_path)
             ]
@@ -208,33 +304,135 @@ class VideoGenerator:
             logger.error(f"Error generating video: {str(e)}")
             return None
 
-async def execute_step(
-    video_file: Path,
-    audio_file: Path,
-    output_dir: Path,
-    style_name: str
-) -> Optional[Path]:
-    """Execute video generation step."""
-    logger.debug("Step 6: Generating final video...")
+    @classmethod
+    def execute_step(cls, context, preserve=None):
+        """
+        Execute the video generation step.
+        
+        Args:
+            context: The pipeline context
+            preserve: Optional list of temporary directories to preserve
+            
+        Returns:
+            Updated context object
+        """
+        generator = cls(context)
+        logger.info(f"Generating final video with audio...")
+        
+        # Set default styles if not specified
+        if 'output_styles' not in context.state:
+            context.state['output_styles'] = ['default']
+        
+        # Generate videos for each style
+        final_video_paths = {}
+        for style in context.state['output_styles']:
+            logger.info(f"Generating video for style: {style}")
+            # Get watermark parameters from context state
+            watermark_text = context.state.get('watermark_text', None)
+            watermark_size = context.state.get('watermark_size', 36)
+            watermark_color = context.state.get('watermark_color', "white")
+            watermark_font = context.state.get('watermark_font', "Arial")
+            
+            final_video_path = generator.generate_video(
+                style, 
+                watermark_text, 
+                watermark_size, 
+                watermark_color, 
+                watermark_font
+            )
+            if final_video_path:
+                final_video_paths[style] = final_video_path
+            
+        # Update context
+        context.state['final_video_paths'] = final_video_paths
+        return context
+
+# Direct function implementation for process_video.py
+def execute_step(video_path: str, audio_path: str, output_dir: Path, 
+                 watermark_text: str = None, watermark_size: int = 36, 
+                 watermark_color: str = "white", watermark_font: str = "Arial") -> dict:
+    """Generate final video with audio.
     
+    Args:
+        video_path: Path to the input video file
+        audio_path: Path to the audio file to add
+        output_dir: Output directory for final video
+        watermark_text: Optional text to display as watermark
+        watermark_size: Font size for watermark text
+        watermark_color: Color of the watermark text
+        watermark_font: Font to use for watermark
+        
+    Returns:
+        Dictionary with output path
+    """
     try:
+        output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Ensured output directory exists: {output_dir}")
         
-        logger.info(f"Input video file: {video_file} (exists: {video_file.exists()})")
-        logger.info(f"Input audio file: {audio_file} (exists: {audio_file.exists()})")
+        # Create simplified context for VideoGenerator
+        class SimpleContext:
+            def __init__(self, language, watermark_settings=None):
+                self.state = {
+                    "language": language
+                }
+                # Add watermark settings to state if provided
+                if watermark_settings:
+                    self.state.update(watermark_settings)
+                
+            def get_step_output_dir(self, step_num):
+                return Path("./")
+                
+            def create_step_dir(self, name):
+                return output_dir
         
-        generator = VideoGenerator()
+        # Determine language from audio file name or use English by default
+        language = "en"
+        if "ur" in str(audio_path):
+            language = "ur"
+        elif "bn" in str(audio_path):
+            language = "bn"
+        elif "hi" in str(audio_path):
+            language = "hi"
+        elif "tr" in str(audio_path):
+            language = "tr"
+            
+        # Create watermark settings if text is provided
+        watermark_settings = {}
+        if watermark_text:
+            watermark_settings = {
+                "watermark_text": watermark_text,
+                "watermark_size": watermark_size,
+                "watermark_color": watermark_color,
+                "watermark_font": watermark_font
+            }
+            
+        # Create a simplified context with watermark settings
+        context = SimpleContext(language, watermark_settings)
         
-        output_file = output_dir / f"final_video_{style_name}.mp4"
-        result = await generator.generate_video(
-            str(video_file),
-            str(audio_file),
-            output_file,
-            style_name
+        # Check if output path exists
+        output_file = output_dir / "final_video.mp4"
+        
+        # Call the implementation directly
+        generator = VideoGenerator(context)
+        
+        # Explicitly call with required parameters
+        result = generator._generate_video(
+            video_path=video_path,
+            audio_path=audio_path,
+            output_path=output_file,
+            watermark_text=watermark_text,
+            watermark_size=watermark_size,
+            watermark_color=watermark_color,
+            watermark_font=watermark_font
         )
         
-        return result
+        if result:
+            logger.info(f"Successfully generated video: {result}")
+            return {"output_path": str(result)}
+        else:
+            logger.error("Failed to generate video")
+            return {"error": "Failed to generate video"}
+            
     except Exception as e:
-        logger.error(f"Error executing step: {str(e)}")
-        return None 
+        logger.error(f"Error generating video: {str(e)}")
+        return {"error": str(e)} 

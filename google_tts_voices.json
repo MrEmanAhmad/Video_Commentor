@@ -1,0 +1,564 @@
+{
+  "af": {
+    "FEMALE": {
+      "Standard": "af-ZA-Standard-A"
+    },
+    "MALE": {}
+  },
+  "am": {
+    "FEMALE": {
+      "Standard": "am-ET-Standard-A",
+      "Wavenet": "am-ET-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "am-ET-Standard-B",
+      "Wavenet": "am-ET-Wavenet-B"
+    }
+  },
+  "ar": {
+    "FEMALE": {
+      "HD": "ar-XA-Chirp3-HD-Aoede",
+      "Standard": "ar-XA-Standard-A",
+      "Wavenet": "ar-XA-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "ar-XA-Chirp3-HD-Charon",
+      "Standard": "ar-XA-Standard-B",
+      "Wavenet": "ar-XA-Wavenet-B"
+    }
+  },
+  "bg": {
+    "FEMALE": {
+      "Standard": "bg-BG-Standard-A"
+    },
+    "MALE": {}
+  },
+  "bn": {
+    "FEMALE": {
+      "HD": "bn-IN-Chirp3-HD-Aoede",
+      "Standard": "bn-IN-Standard-A",
+      "Wavenet": "bn-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "bn-IN-Chirp3-HD-Charon",
+      "Standard": "bn-IN-Standard-B",
+      "Wavenet": "bn-IN-Wavenet-B"
+    }
+  },
+  "ca": {
+    "FEMALE": {
+      "Standard": "ca-ES-Standard-A"
+    },
+    "MALE": {}
+  },
+  "cmn": {
+    "FEMALE": {
+      "Standard": "cmn-TW-Standard-A",
+      "Wavenet": "cmn-TW-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "cmn-TW-Standard-B",
+      "Wavenet": "cmn-TW-Wavenet-B"
+    }
+  },
+  "cs": {
+    "FEMALE": {
+      "Standard": "cs-CZ-Standard-A",
+      "Wavenet": "cs-CZ-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "da": {
+    "FEMALE": {
+      "Neural2": "da-DK-Neural2-F",
+      "Standard": "da-DK-Standard-A",
+      "Wavenet": "da-DK-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "da-DK-Standard-C",
+      "Wavenet": "da-DK-Wavenet-C"
+    }
+  },
+  "de": {
+    "FEMALE": {
+      "HD": "de-DE-Chirp-HD-F",
+      "Neural2": "de-DE-Neural2-G",
+      "Standard": "de-DE-Standard-A",
+      "Wavenet": "de-DE-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "de-DE-Chirp-HD-D",
+      "Neural2": "de-DE-Neural2-H",
+      "Standard": "de-DE-Polyglot-1",
+      "Wavenet": "de-DE-Wavenet-B"
+    }
+  },
+  "el": {
+    "FEMALE": {
+      "Standard": "el-GR-Standard-A",
+      "Wavenet": "el-GR-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "en-AU": {
+    "FEMALE": {
+      "HD": "en-AU-Chirp-HD-F",
+      "Neural2": "en-AU-Neural2-A",
+      "Standard": "en-AU-News-E",
+      "Wavenet": "en-AU-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "en-AU-Chirp-HD-D",
+      "Neural2": "en-AU-Neural2-B",
+      "Standard": "en-AU-News-G",
+      "Wavenet": "en-AU-Wavenet-B"
+    }
+  },
+  "en-GB": {
+    "FEMALE": {
+      "HD": "en-GB-Chirp-HD-F",
+      "Neural2": "en-GB-Neural2-A",
+      "Standard": "en-GB-News-G",
+      "Wavenet": "en-GB-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "en-GB-Chirp-HD-D",
+      "Neural2": "en-GB-Neural2-B",
+      "Standard": "en-GB-News-J",
+      "Wavenet": "en-GB-Wavenet-B"
+    }
+  },
+  "en-IN": {
+    "FEMALE": {
+      "HD": "en-IN-Chirp-HD-F",
+      "Neural2": "en-IN-Neural2-A",
+      "Standard": "en-IN-Standard-A",
+      "Wavenet": "en-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "en-IN-Chirp-HD-D",
+      "Neural2": "en-IN-Neural2-B",
+      "Standard": "en-IN-Standard-B",
+      "Wavenet": "en-IN-Wavenet-B"
+    }
+  },
+  "en": {
+    "FEMALE": {
+      "HD": "en-US-Chirp-HD-F",
+      "Neural2": "en-US-Neural2-C",
+      "Standard": "en-US-News-K",
+      "Wavenet": "en-US-Wavenet-C"
+    },
+    "MALE": {
+      "Standard": "en-US-Casual-K",
+      "HD": "en-US-Chirp-HD-D",
+      "Neural2": "en-US-Neural2-A",
+      "Wavenet": "en-US-Wavenet-A"
+    }
+  },
+  "es": {
+    "FEMALE": {
+      "HD": "es-US-Chirp-HD-F",
+      "Neural2": "es-US-Neural2-A",
+      "Standard": "es-US-News-F",
+      "Wavenet": "es-US-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "es-US-Chirp-HD-D",
+      "Neural2": "es-US-Neural2-B",
+      "Standard": "es-US-News-D",
+      "Wavenet": "es-US-Wavenet-B"
+    }
+  },
+  "et": {
+    "FEMALE": {},
+    "MALE": {
+      "Standard": "et-EE-Standard-A"
+    }
+  },
+  "eu": {
+    "FEMALE": {
+      "Standard": "eu-ES-Standard-A"
+    },
+    "MALE": {}
+  },
+  "fi": {
+    "FEMALE": {
+      "Standard": "fi-FI-Standard-A",
+      "Wavenet": "fi-FI-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "fil": {
+    "FEMALE": {
+      "Standard": "fil-PH-Standard-A",
+      "Wavenet": "fil-PH-Wavenet-A",
+      "Neural2": "fil-ph-Neural2-A"
+    },
+    "MALE": {
+      "Standard": "fil-PH-Standard-C",
+      "Wavenet": "fil-PH-Wavenet-C",
+      "Neural2": "fil-ph-Neural2-D"
+    }
+  },
+  "fr": {
+    "FEMALE": {
+      "HD": "fr-FR-Chirp-HD-F",
+      "Neural2": "fr-FR-Neural2-F",
+      "Standard": "fr-FR-Standard-A",
+      "Wavenet": "fr-FR-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "fr-FR-Chirp-HD-D",
+      "Neural2": "fr-FR-Neural2-G",
+      "Standard": "fr-FR-Polyglot-1",
+      "Wavenet": "fr-FR-Wavenet-B"
+    }
+  },
+  "gl": {
+    "FEMALE": {
+      "Standard": "gl-ES-Standard-A"
+    },
+    "MALE": {}
+  },
+  "gu": {
+    "FEMALE": {
+      "HD": "gu-IN-Chirp3-HD-Aoede",
+      "Standard": "gu-IN-Standard-A",
+      "Wavenet": "gu-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "gu-IN-Chirp3-HD-Charon",
+      "Standard": "gu-IN-Standard-B",
+      "Wavenet": "gu-IN-Wavenet-B"
+    }
+  },
+  "he": {
+    "FEMALE": {
+      "Standard": "he-IL-Standard-A",
+      "Wavenet": "he-IL-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "he-IL-Standard-B",
+      "Wavenet": "he-IL-Wavenet-B"
+    }
+  },
+  "hi": {
+    "FEMALE": {
+      "HD": "hi-IN-Chirp3-HD-Aoede",
+      "Neural2": "hi-IN-Neural2-A",
+      "Standard": "hi-IN-Standard-A",
+      "Wavenet": "hi-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "hi-IN-Chirp3-HD-Charon",
+      "Neural2": "hi-IN-Neural2-B",
+      "Standard": "hi-IN-Standard-B",
+      "Wavenet": "hi-IN-Wavenet-B"
+    }
+  },
+  "hu": {
+    "FEMALE": {
+      "Standard": "hu-HU-Standard-A",
+      "Wavenet": "hu-HU-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "id": {
+    "FEMALE": {
+      "HD": "id-ID-Chirp3-HD-Aoede",
+      "Standard": "id-ID-Standard-A",
+      "Wavenet": "id-ID-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "id-ID-Chirp3-HD-Charon",
+      "Standard": "id-ID-Standard-B",
+      "Wavenet": "id-ID-Wavenet-B"
+    }
+  },
+  "is": {
+    "FEMALE": {
+      "Standard": "is-IS-Standard-A"
+    },
+    "MALE": {}
+  },
+  "it": {
+    "FEMALE": {
+      "HD": "it-IT-Chirp-HD-F",
+      "Neural2": "it-IT-Neural2-A",
+      "Standard": "it-IT-Standard-A",
+      "Wavenet": "it-IT-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "it-IT-Chirp-HD-D",
+      "Neural2": "it-IT-Neural2-F",
+      "Standard": "it-IT-Standard-C",
+      "Wavenet": "it-IT-Wavenet-C"
+    }
+  },
+  "ja": {
+    "FEMALE": {
+      "HD": "ja-JP-Chirp3-HD-Aoede",
+      "Neural2": "ja-JP-Neural2-B",
+      "Standard": "ja-JP-Standard-A",
+      "Wavenet": "ja-JP-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "ja-JP-Chirp3-HD-Charon",
+      "Neural2": "ja-JP-Neural2-C",
+      "Standard": "ja-JP-Standard-C",
+      "Wavenet": "ja-JP-Wavenet-C"
+    }
+  },
+  "kn": {
+    "FEMALE": {
+      "HD": "kn-IN-Chirp3-HD-Aoede",
+      "Standard": "kn-IN-Standard-A",
+      "Wavenet": "kn-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "kn-IN-Chirp3-HD-Charon",
+      "Standard": "kn-IN-Standard-B",
+      "Wavenet": "kn-IN-Wavenet-B"
+    }
+  },
+  "ko": {
+    "FEMALE": {
+      "HD": "ko-KR-Chirp3-HD-Aoede",
+      "Neural2": "ko-KR-Neural2-A",
+      "Standard": "ko-KR-Standard-A",
+      "Wavenet": "ko-KR-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "ko-KR-Chirp3-HD-Charon",
+      "Neural2": "ko-KR-Neural2-C",
+      "Standard": "ko-KR-Standard-C",
+      "Wavenet": "ko-KR-Wavenet-C"
+    }
+  },
+  "lt": {
+    "FEMALE": {},
+    "MALE": {
+      "Standard": "lt-LT-Standard-A"
+    }
+  },
+  "lv": {
+    "FEMALE": {},
+    "MALE": {
+      "Standard": "lv-LV-Standard-A"
+    }
+  },
+  "ml": {
+    "FEMALE": {
+      "HD": "ml-IN-Chirp3-HD-Aoede",
+      "Standard": "ml-IN-Standard-A",
+      "Wavenet": "ml-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "ml-IN-Chirp3-HD-Charon",
+      "Standard": "ml-IN-Standard-B",
+      "Wavenet": "ml-IN-Wavenet-B"
+    }
+  },
+  "mr": {
+    "FEMALE": {
+      "HD": "mr-IN-Chirp3-HD-Aoede",
+      "Standard": "mr-IN-Standard-A",
+      "Wavenet": "mr-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "mr-IN-Chirp3-HD-Charon",
+      "Standard": "mr-IN-Standard-B",
+      "Wavenet": "mr-IN-Wavenet-B"
+    }
+  },
+  "ms": {
+    "FEMALE": {
+      "Standard": "ms-MY-Standard-A",
+      "Wavenet": "ms-MY-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "ms-MY-Standard-B",
+      "Wavenet": "ms-MY-Wavenet-B"
+    }
+  },
+  "nb": {
+    "FEMALE": {
+      "Standard": "nb-NO-Standard-A",
+      "Wavenet": "nb-NO-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "nb-NO-Standard-B",
+      "Wavenet": "nb-NO-Wavenet-B"
+    }
+  },
+  "nl": {
+    "FEMALE": {
+      "HD": "nl-NL-Chirp3-HD-Aoede",
+      "Standard": "nl-NL-Standard-A",
+      "Wavenet": "nl-NL-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "nl-NL-Chirp3-HD-Charon",
+      "Standard": "nl-NL-Standard-B",
+      "Wavenet": "nl-NL-Wavenet-B"
+    }
+  },
+  "pa": {
+    "FEMALE": {
+      "Standard": "pa-IN-Standard-A",
+      "Wavenet": "pa-IN-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "pa-IN-Standard-B",
+      "Wavenet": "pa-IN-Wavenet-B"
+    }
+  },
+  "pl": {
+    "FEMALE": {
+      "HD": "pl-PL-Chirp3-HD-Aoede",
+      "Standard": "pl-PL-Standard-A",
+      "Wavenet": "pl-PL-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "pl-PL-Chirp3-HD-Charon",
+      "Standard": "pl-PL-Standard-B",
+      "Wavenet": "pl-PL-Wavenet-B"
+    }
+  },
+  "pt": {
+    "FEMALE": {
+      "Standard": "pt-PT-Standard-A",
+      "Wavenet": "pt-PT-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "pt-PT-Standard-B",
+      "Wavenet": "pt-PT-Wavenet-B"
+    }
+  },
+  "ro": {
+    "FEMALE": {
+      "Standard": "ro-RO-Standard-A",
+      "Wavenet": "ro-RO-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "ru": {
+    "FEMALE": {
+      "HD": "ru-RU-Chirp3-HD-Aoede",
+      "Standard": "ru-RU-Standard-A",
+      "Wavenet": "ru-RU-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "ru-RU-Chirp3-HD-Charon",
+      "Standard": "ru-RU-Standard-B",
+      "Wavenet": "ru-RU-Wavenet-B"
+    }
+  },
+  "sk": {
+    "FEMALE": {
+      "Standard": "sk-SK-Standard-A",
+      "Wavenet": "sk-SK-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "sr": {
+    "FEMALE": {
+      "Standard": "sr-RS-Standard-A"
+    },
+    "MALE": {}
+  },
+  "sv": {
+    "FEMALE": {
+      "Standard": "sv-SE-Standard-A",
+      "Wavenet": "sv-SE-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "sv-SE-Standard-D",
+      "Wavenet": "sv-SE-Wavenet-C"
+    }
+  },
+  "ta": {
+    "FEMALE": {
+      "HD": "ta-IN-Chirp3-HD-Aoede",
+      "Standard": "ta-IN-Standard-A",
+      "Wavenet": "ta-IN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "ta-IN-Chirp3-HD-Charon",
+      "Standard": "ta-IN-Standard-B",
+      "Wavenet": "ta-IN-Wavenet-B"
+    }
+  },
+  "te": {
+    "FEMALE": {
+      "HD": "te-IN-Chirp3-HD-Aoede",
+      "Standard": "te-IN-Standard-A"
+    },
+    "MALE": {
+      "HD": "te-IN-Chirp3-HD-Charon",
+      "Standard": "te-IN-Standard-B"
+    }
+  },
+  "th": {
+    "FEMALE": {
+      "HD": "th-TH-Chirp3-HD-Aoede",
+      "Neural2": "th-TH-Neural2-C",
+      "Standard": "th-TH-Standard-A"
+    },
+    "MALE": {
+      "HD": "th-TH-Chirp3-HD-Charon"
+    }
+  },
+  "tr": {
+    "FEMALE": {
+      "HD": "tr-TR-Chirp3-HD-Aoede",
+      "Standard": "tr-TR-Standard-A",
+      "Wavenet": "tr-TR-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "tr-TR-Chirp3-HD-Charon",
+      "Standard": "tr-TR-Standard-B",
+      "Wavenet": "tr-TR-Wavenet-B"
+    }
+  },
+  "uk": {
+    "FEMALE": {
+      "Standard": "uk-UA-Standard-A",
+      "Wavenet": "uk-UA-Wavenet-A"
+    },
+    "MALE": {}
+  },
+  "ur": {
+    "FEMALE": {
+      "Standard": "ur-IN-Standard-A",
+      "Wavenet": "ur-IN-Wavenet-A"
+    },
+    "MALE": {
+      "Standard": "ur-IN-Standard-B",
+      "Wavenet": "ur-IN-Wavenet-B"
+    }
+  },
+  "vi": {
+    "FEMALE": {
+      "HD": "vi-VN-Chirp3-HD-Aoede",
+      "Neural2": "vi-VN-Neural2-A",
+      "Standard": "vi-VN-Standard-A",
+      "Wavenet": "vi-VN-Wavenet-A"
+    },
+    "MALE": {
+      "HD": "vi-VN-Chirp3-HD-Charon",
+      "Neural2": "vi-VN-Neural2-D",
+      "Standard": "vi-VN-Standard-B",
+      "Wavenet": "vi-VN-Wavenet-B"
+    }
+  },
+  "yue": {
+    "FEMALE": {
+      "Standard": "yue-HK-Standard-A"
+    },
+    "MALE": {
+      "Standard": "yue-HK-Standard-B"
+    }
+  }
+}
