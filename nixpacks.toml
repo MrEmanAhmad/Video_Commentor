@@ -28,4 +28,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python railway_start.py" 
+cmd = "python railway_deployment.py" 

@@ -32,6 +32,6 @@ fi
 # Set permissions for execution if needed
 export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/google_credentials.json"
 
-# Run the Streamlit app
-echo "Starting Streamlit server..."
-streamlit run streamlit_app.py 
+# Run the Railway deployment script
+echo "Running Railway deployment script..."
+python3 railway_deployment.py 
