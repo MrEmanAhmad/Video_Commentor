@@ -35,8 +35,11 @@ COPY . .
 # Create needed directories
 RUN mkdir -p /app/output /app/tmp /app/lib
 
+# Make the start script executable
+RUN chmod +x start.sh
+
 # Expose the port the app runs on
 EXPOSE 8080
 
 # Command to run the application
-CMD streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=${PORT:-8080} --server.enableCORS=false 
+CMD ["./start.sh"] 
