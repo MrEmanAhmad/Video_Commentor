@@ -669,13 +669,13 @@ with st.expander("Advanced Options"):
     with adv_col1:
         preserve_temp = st.checkbox(
             "Preserve Temporary Files",
-            value=True,
+            value=False,
             help="Keep intermediate files generated during processing"
         )
         
         skip_analysis = st.checkbox(
             "Skip Frame Analysis",
-            value=False,
+            value=True,
             help="Skip the AI scene analysis step (faster but less detailed commentary)"
         )
     
@@ -746,7 +746,7 @@ with st.expander("Watermark Options"):
             # Watermark text
             watermark_text = st.text_input(
                 "Watermark Text",
-                value="© Video Commentary Bot",
+                value="InterestingUrduVideos(Youtube logo)",
                 help="Text to display as watermark in the center of the video"
             )
             
@@ -861,8 +861,8 @@ if st.button("Generate Video & Captions"):
                         output_dir=output_dir,
                         language=language,
                         commentary_style=style,
-                        preserve_temp=True,
-                        cleanup_temp=False,
+                        preserve_temp=False,
+                        cleanup_temp=True,
                         watermark_text=watermark_text if enable_watermark else None,
                         watermark_size=watermark_size,
                         watermark_color=watermark_color,
@@ -916,6 +916,12 @@ if st.button("Generate Video & Captions"):
                     final_video_path = str(result)
                     captions_data = None
                 
+                # Store the results in session state for persistent access
+                st.session_state["final_video_path"] = final_video_path
+                st.session_state["captions_data"] = captions_data
+                st.session_state["download_ready"] = True
+                st.session_state["cleanup_pending"] = True
+                
                 if os.path.exists(final_video_path):
                     # Create a download button for the video
                     with open(final_video_path, "rb") as file:
@@ -959,6 +965,9 @@ if st.button("Generate Video & Captions"):
                         
                         # Display the video in the app
                         video_placeholder.video(str(most_recent))
+                        
+                        # Store the alternative video path in session state
+                        st.session_state["final_video_path"] = str(most_recent)
                     else:
                         st.error("No video files found in output directory")
                 
@@ -998,6 +1007,29 @@ if st.button("Generate Video & Captions"):
                     st.markdown(f"<small>Generated using {model_used}</small>", unsafe_allow_html=True)
                     
                     st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Add confirmation button to proceed after downloading/copying
+                st.markdown("---")
+                st.warning("⚠️ The page will reload after you click the button below. Make sure to download or copy your content before proceeding.")
+                if st.button("I've Downloaded My Content - Proceed"):
+                    # If user confirms, clean up temporary files
+                    if "cleanup_pending" in st.session_state and st.session_state["cleanup_pending"]:
+                        try:
+                            # Extract the job directory from the video path
+                            video_path = st.session_state["final_video_path"]
+                            job_dir = Path(video_path).parents[1]  # Go up two levels to get to the job directory
+                            
+                            # Run cleanup to remove temporary files but preserve the final video
+                            cleanup_result = cleanup([job_dir], preserve=["final", "captions"])
+                            logger.info(f"Cleanup completed after user confirmation: {cleanup_result}")
+                            
+                            # Mark cleanup as completed
+                            st.session_state["cleanup_pending"] = False
+                        except Exception as e:
+                            logger.error(f"Error during post-confirmation cleanup: {str(e)}")
+                    
+                    # Rerun the app to reset the UI
+                    st.experimental_rerun()
         
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
