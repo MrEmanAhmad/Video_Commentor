@@ -861,8 +861,8 @@ if st.button("Generate Video & Captions"):
                         output_dir=output_dir,
                         language=language,
                         commentary_style=style,
-                        preserve_temp=False,
-                        cleanup_temp=True,
+                        preserve_temp=True,  # Keep temp files until user confirms
+                        cleanup_temp=False,  # Don't clean up automatically
                         watermark_text=watermark_text if enable_watermark else None,
                         watermark_size=watermark_size,
                         watermark_color=watermark_color,
@@ -1008,28 +1008,60 @@ if st.button("Generate Video & Captions"):
                     
                     st.markdown("</div>", unsafe_allow_html=True)
                 
-                # Add confirmation button to proceed after downloading/copying
+                # Add confirmation dialog with multiple options
                 st.markdown("---")
-                st.warning("⚠️ The page will reload after you click the button below. Make sure to download or copy your content before proceeding.")
-                if st.button("I've Downloaded My Content - Proceed"):
-                    # If user confirms, clean up temporary files
-                    if "cleanup_pending" in st.session_state and st.session_state["cleanup_pending"]:
-                        try:
-                            # Extract the job directory from the video path
-                            video_path = st.session_state["final_video_path"]
-                            job_dir = Path(video_path).parents[1]  # Go up two levels to get to the job directory
-                            
-                            # Run cleanup to remove temporary files but preserve the final video
-                            cleanup_result = cleanup([job_dir], preserve=["final", "captions"])
-                            logger.info(f"Cleanup completed after user confirmation: {cleanup_result}")
-                            
-                            # Mark cleanup as completed
-                            st.session_state["cleanup_pending"] = False
-                        except Exception as e:
-                            logger.error(f"Error during post-confirmation cleanup: {str(e)}")
+                st.markdown("### What would you like to do next?")
+                
+                # Create a styled container for the confirmation dialog
+                with st.container():
+                    st.markdown("""
+                    <div style='background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0;'>
+                        <h4>Please choose an option:</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    # Rerun the app to reset the UI
-                    st.experimental_rerun()
+                    # Create two columns for the buttons
+                    conf_col1, conf_col2 = st.columns(2)
+                    
+                    with conf_col1:
+                        if st.button("🗑️ Clean Up & Start New", help="Download your files first! This will clean up temporary files and reset the app."):
+                            # If user confirms cleanup, clean up temporary files
+                            if "final_video_path" in st.session_state:
+                                try:
+                                    # Extract the job directory from the video path
+                                    video_path = st.session_state["final_video_path"]
+                                    job_dir = Path(video_path).parents[1]  # Go up two levels to get to the job directory
+                                    
+                                    # Run cleanup to remove temporary files but preserve the final video
+                                    cleanup_result = cleanup([job_dir], preserve=["final", "captions"])
+                                    logger.info(f"Cleanup completed after user confirmation: {cleanup_result}")
+                                    
+                                    # Mark cleanup as completed
+                                    st.session_state["cleanup_pending"] = False
+                                    st.success("Temporary files cleaned up successfully!")
+                                except Exception as e:
+                                    logger.error(f"Error during post-confirmation cleanup: {str(e)}")
+                                    st.error(f"Error cleaning up: {str(e)}")
+                            
+                            # Rerun the app to reset the UI
+                            time.sleep(1)  # Short delay so the user can see the success message
+                            st.experimental_rerun()
+                    
+                    with conf_col2:
+                        if st.button("💾 Keep Files & Start New", help="Keep all temporary files for later use and reset the app."):
+                            # Just rerun without cleanup
+                            st.session_state["cleanup_pending"] = False
+                            st.info("Keeping all files. Starting new session...")
+                            time.sleep(1)  # Short delay so the user can see the info message
+                            st.experimental_rerun()
+                
+                # Add explanation about temp files
+                st.markdown("""
+                <div style='font-size: 0.8em; color: #666; margin-top: 10px;'>
+                    <p><strong>What are temporary files?</strong> These include downloaded video, extracted frames, 
+                    analysis data, and other intermediate files. The final video and captions will always be preserved.</p>
+                </div>
+                """, unsafe_allow_html=True)
         
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
