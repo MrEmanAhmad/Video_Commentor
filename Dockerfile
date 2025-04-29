@@ -39,4 +39,4 @@ RUN mkdir -p /app/output /app/tmp /app/lib
 EXPOSE 8080
 
 # Command to run the application
-CMD ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8080", "--server.enableCORS=false"] 
+CMD streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=${PORT:-8080} --server.enableCORS=false 
