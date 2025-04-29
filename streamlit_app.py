@@ -187,6 +187,8 @@ from pipeline.Step_4_generate_commentary import execute_step as generate_comment
 from pipeline.Step_5_generate_audio import execute_step as generate_audio
 from pipeline.Step_6_video_generation import execute_step as generate_video
 from pipeline.Step_7_cleanup import execute_step as cleanup
+# Import caption generator
+from pipeline.generate_captions import generate_caption
 
 # Setup logging
 logging.basicConfig(
@@ -292,7 +294,10 @@ async def process_video(
     watermark_color: str = "white",
     watermark_font: str = "Arial",
     skip_analysis: bool = False,
-    monitor_resources: bool = False
+    monitor_resources: bool = False,
+    generate_captions: bool = False,
+    caption_platform: str = "general",
+    use_gpt4o_for_captions: bool = False
 ):
     """
     Process a video through the entire pipeline.
@@ -310,9 +315,12 @@ async def process_video(
         watermark_font: Font to use for watermark
         skip_analysis: Whether to skip the frame analysis step
         monitor_resources: Whether to monitor resource usage
+        generate_captions: Whether to generate social media captions
+        caption_platform: Platform for captions
+        use_gpt4o_for_captions: Whether to use GPT-4o for captions
     
     Returns:
-        Path to the final video file
+        Path to the final video file and captions data
     """
     # Initialize resource monitor if requested
     resource_monitor = ResourceMonitor(enabled=monitor_resources)
@@ -333,7 +341,8 @@ async def process_video(
             "analysis": job_dir / "03_analysis",
             "commentary": job_dir / "04_commentary",
             "audio": job_dir / "05_audio",
-            "final": job_dir / "06_final"
+            "final": job_dir / "06_final",
+            "captions": job_dir / "captions"  # Add directory for captions
         }
         
         # Create all directories
@@ -376,11 +385,13 @@ async def process_video(
         }
         
         # Step 3: Analyze Frames (optional)
+        analysis_file = None
         if not skip_analysis:
             resource_monitor.start_step("analyze_frames")
             logger.info("Step 3: Analyzing frames...")
             analysis_result = await analyze_frames(frames_info, steps_dirs["analysis"])
             frames_info = analysis_result
+            analysis_file = steps_dirs["analysis"] / "frame_analysis.json"
             resource_monitor.end_step()
         else:
             logger.info("Step 3: Skipping frame analysis as requested by skip_analysis flag...")
@@ -441,11 +452,33 @@ async def process_video(
         if "error" in video_result:
             raise Exception(f"Video generation failed: {video_result['error']}")
         
+        # Optional step: Generate captions
+        captions_data = None
+        if generate_captions:
+            resource_monitor.start_step("generate_captions")
+            logger.info("Generating social media captions...")
+            
+            # Generate captions
+            caption_result = await generate_caption(
+                analysis_file=analysis_file,
+                platform=caption_platform,
+                use_gpt4o=use_gpt4o_for_captions
+            )
+            
+            # Save caption result to file
+            caption_file = steps_dirs["captions"] / "generated_caption.json"
+            with open(caption_file, 'w', encoding='utf-8') as f:
+                json.dump(caption_result, f, indent=2)
+            
+            captions_data = caption_result
+            resource_monitor.end_step()
+            logger.info("Caption generation complete!")
+        
         # Step 7: Cleanup (optional)
         if cleanup_temp and not preserve_temp:
             resource_monitor.start_step("cleanup")
             logger.info("Step 7: Cleaning up temporary files...")
-            cleanup_result = cleanup([job_dir], preserve=["final"])
+            cleanup_result = cleanup([job_dir], preserve=["final", "captions"])
             logger.info(f"Cleanup completed: {cleanup_result}")
             resource_monitor.end_step()
         
@@ -470,11 +503,14 @@ async def process_video(
         # Stop resource monitoring
         resource_monitor.stop()
         
-        # Return final video path
+        # Return final video path and captions data
         final_video_path = video_result["output_path"]
         logger.info(f"Processing complete! Final video available at: {final_video_path}")
         
-        return final_video_path
+        return {
+            "video_path": final_video_path,
+            "captions": captions_data
+        }
         
     except Exception as e:
         # Stop resource monitoring on error
@@ -516,6 +552,19 @@ st.markdown("""
         padding: 10px;
         border-radius: 5px;
         margin-top: 10px;
+    }
+    .copy-btn {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        margin: 10px 0;
+    }
+    .copy-btn:hover {
+        background-color: #45a049;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -562,23 +611,32 @@ COLOR_OPTIONS = {
     "Teal": "teal"
 }
 
+# Define social media platform options
+PLATFORM_OPTIONS = {
+    "General": "general",
+    "Instagram": "instagram",
+    "TikTok": "tiktok",
+    "Twitter/X": "twitter"
+}
+
 # Title and description
 st.title("🎬 Video Commentary Bot")
 st.markdown("""
 Generate AI-powered commentary for any video. Just enter a URL and customize your settings!
 """)
 
-# Create two columns for inputs
+# Create a single tab instead of two tabs
+# Video URL input
+video_url = st.text_input(
+    "Video URL",
+    placeholder="Enter YouTube, Twitter, or direct video URL",
+    help="Supports YouTube, Twitter/X, and direct video links"
+)
+
+# Create two columns for the main inputs
 col1, col2 = st.columns(2)
 
 with col1:
-    # Video URL input
-    video_url = st.text_input(
-        "Video URL",
-        placeholder="Enter YouTube, Twitter, or direct video URL",
-        help="Supports YouTube, Twitter/X, and direct video links"
-    )
-    
     # Commentary language
     lang_name = st.selectbox(
         "Commentary Language",
@@ -603,110 +661,145 @@ with col2:
         value="./output",
         help="Directory where processed videos will be saved"
     )
-    
-    # Advanced options
-    with st.expander("Advanced Options"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            preserve_temp = st.checkbox(
-                "Preserve Temporary Files",
-                value=True,  # Changed to true by default to avoid cleanup issues
-                help="Keep intermediate files generated during processing"
-            )
-            
-            skip_analysis = st.checkbox(
-                "Skip Frame Analysis",
-                value=False,
-                help="Skip the AI scene analysis step (faster but less detailed commentary)"
-            )
-        
-        with col2:
-            no_cleanup = st.checkbox(
-                "Skip Cleanup",
-                value=True,  # Changed to true by default to avoid cleanup issues
-                help="Skip the cleanup step after processing"
-            )
-            
-            monitor_resources = st.checkbox(
-                "Monitor Resource Usage",
-                value=False,
-                help="Track processing time and memory usage for each step"
-            )
-            
-            if monitor_resources:
-                st.info("Resource usage report will be saved in the output directory")
 
-    # Watermark options
-    with st.expander("Watermark Options"):
-        enable_watermark = st.checkbox(
-            "Add Watermark Text",
-            value=False,
-            help="Add a text watermark to the center of the video"
+# Advanced options in expandable section
+with st.expander("Advanced Options"):
+    adv_col1, adv_col2 = st.columns(2)
+    
+    with adv_col1:
+        preserve_temp = st.checkbox(
+            "Preserve Temporary Files",
+            value=True,
+            help="Keep intermediate files generated during processing"
         )
         
-        if enable_watermark:
-            # Container with background color for watermark options
-            with st.container():
-                st.markdown('<div class="watermark-options">', unsafe_allow_html=True)
-                
-                # Watermark text
-                watermark_text = st.text_input(
-                    "Watermark Text",
-                    value="© Video Commentary Bot",
-                    help="Text to display as watermark in the center of the video"
+        skip_analysis = st.checkbox(
+            "Skip Frame Analysis",
+            value=False,
+            help="Skip the AI scene analysis step (faster but less detailed commentary)"
+        )
+    
+    with adv_col2:
+        no_cleanup = st.checkbox(
+            "Skip Cleanup",
+            value=True,
+            help="Skip the cleanup step after processing"
+        )
+        
+        monitor_resources = st.checkbox(
+            "Monitor Resource Usage",
+            value=False,
+            help="Track processing time and memory usage for each step"
+        )
+        
+        if monitor_resources:
+            st.info("Resource usage report will be saved in the output directory")
+
+    # Social Media Captions section within Advanced Options
+    st.markdown("### Social Media Captions")
+    st.markdown("Generate engaging captions with hashtags and emojis along with your video")
+    
+    # Generate captions checkbox
+    generate_captions = st.checkbox(
+        "Generate Social Media Captions",
+        value=False,
+        help="Also generate social media captions along with the video"
+    )
+    
+    # Only show caption options if the checkbox is enabled
+    if generate_captions:
+        caption_col1, caption_col2 = st.columns(2)
+        
+        with caption_col1:
+            # Social media platform selection
+            platform_name = st.selectbox(
+                "Social Media Platform",
+                options=list(PLATFORM_OPTIONS.keys()),
+                index=0,
+                help="Select the target social media platform for your caption"
+            )
+            platform = PLATFORM_OPTIONS[platform_name]
+        
+        with caption_col2:
+            # GPT-4o option
+            use_gpt4o_for_captions = st.checkbox(
+                "Use GPT-4o",
+                value=False,
+                help="Use OpenAI's GPT-4o model for better quality captions, especially in non-English languages"
+            )
+            
+        st.info("Captions will be generated in the same language as the commentary")
+
+# Watermark options
+with st.expander("Watermark Options"):
+    enable_watermark = st.checkbox(
+        "Add Watermark Text",
+        value=False,
+        help="Add a text watermark to the center of the video"
+    )
+    
+    if enable_watermark:
+        # Container with background color for watermark options
+        with st.container():
+            st.markdown('<div class="watermark-options">', unsafe_allow_html=True)
+            
+            # Watermark text
+            watermark_text = st.text_input(
+                "Watermark Text",
+                value="© Video Commentary Bot",
+                help="Text to display as watermark in the center of the video"
+            )
+            
+            # Create two columns for size and color
+            wm_col1, wm_col2 = st.columns(2)
+            
+            with wm_col1:
+                # Watermark size
+                watermark_size = st.slider(
+                    "Font Size",
+                    min_value=12,
+                    max_value=72,
+                    value=36,
+                    step=2,
+                    help="Size of the watermark text"
                 )
-                
-                # Create two columns for size and color
-                wm_col1, wm_col2 = st.columns(2)
-                
-                with wm_col1:
-                    # Watermark size
-                    watermark_size = st.slider(
-                        "Font Size",
-                        min_value=12,
-                        max_value=72,
-                        value=36,
-                        step=2,
-                        help="Size of the watermark text"
-                    )
-                
-                with wm_col2:
-                    # Watermark color
-                    color_name = st.selectbox(
-                        "Text Color",
-                        options=list(COLOR_OPTIONS.keys()),
-                        index=0,
-                        help="Color of the watermark text"
-                    )
-                    watermark_color = COLOR_OPTIONS[color_name]
-                
-                # Watermark font
-                watermark_font = st.selectbox(
-                    "Font",
-                    options=FONT_OPTIONS,
+            
+            with wm_col2:
+                # Watermark color
+                color_name = st.selectbox(
+                    "Text Color",
+                    options=list(COLOR_OPTIONS.keys()),
                     index=0,
-                    help="Font to use for the watermark text"
+                    help="Color of the watermark text"
                 )
-                
-                # Preview of watermark
-                st.markdown(
-                    f"<div style='text-align:center; padding:10px; margin:10px 0; "
-                    f"background-color:rgba(0,0,0,0.5); color:{watermark_color}; "
-                    f"font-family:{watermark_font}; font-size:{watermark_size}px;'>"
-                    f"{watermark_text}</div>", 
-                    unsafe_allow_html=True
-                )
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            watermark_text = None
-            watermark_size = 36
-            watermark_color = "white"
-            watermark_font = "Arial"
+                watermark_color = COLOR_OPTIONS[color_name]
+            
+            # Watermark font
+            watermark_font = st.selectbox(
+                "Font",
+                options=FONT_OPTIONS,
+                index=0,
+                help="Font to use for the watermark text"
+            )
+            
+            # Preview of watermark
+            st.markdown(
+                f"<div style='text-align:center; padding:10px; margin:10px 0; "
+                f"background-color:rgba(0,0,0,0.5); color:{watermark_color}; "
+                f"font-family:{watermark_font}; font-size:{watermark_size}px;'>"
+                f"{watermark_text}</div>", 
+                unsafe_allow_html=True
+            )
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        watermark_text = None
+        watermark_size = 36
+        watermark_color = "white"
+        watermark_font = "Arial"
 
 # Submit button
-if st.button("Generate Commentary"):
+if st.button("Generate Video & Captions"):
     if not video_url:
         st.error("Please enter a video URL")
     else:
@@ -731,12 +824,19 @@ if st.button("Generate Commentary"):
                     stages.append("Analyzing frames")
                 
                 # Add remaining stages
-                stages.extend([
+                base_stages = [
                     "Generating commentary",
                     "Creating audio",
-                    "Rendering final video",
-                    "Finalizing"
-                ])
+                    "Rendering final video"
+                ]
+                stages.extend(base_stages)
+                
+                # Add caption stage if needed
+                if generate_captions:
+                    stages.append("Generating captions")
+                
+                # Add finalizing stage
+                stages.append("Finalizing")
                 
                 # Show initial stages information
                 if skip_analysis:
@@ -748,7 +848,10 @@ if st.button("Generate Commentary"):
                     "language": language,
                     "style": style,
                     "skip_analysis": skip_analysis,
-                    "monitor_resources": monitor_resources
+                    "monitor_resources": monitor_resources,
+                    "generate_captions": generate_captions,
+                    "caption_platform": platform if generate_captions else None,
+                    "use_gpt4o_for_captions": use_gpt4o_for_captions if generate_captions else False
                 }
                 
                 # Create task for video processing
@@ -758,14 +861,17 @@ if st.button("Generate Commentary"):
                         output_dir=output_dir,
                         language=language,
                         commentary_style=style,
-                        preserve_temp=True,  # Always preserve temp files for Streamlit
-                        cleanup_temp=False,   # Disable cleanup to ensure files persist
+                        preserve_temp=True,
+                        cleanup_temp=False,
                         watermark_text=watermark_text if enable_watermark else None,
                         watermark_size=watermark_size,
                         watermark_color=watermark_color,
                         watermark_font=watermark_font,
                         skip_analysis=skip_analysis,
-                        monitor_resources=monitor_resources
+                        monitor_resources=monitor_resources,
+                        generate_captions=generate_captions,
+                        caption_platform=platform if generate_captions else "general",
+                        use_gpt4o_for_captions=use_gpt4o_for_captions if generate_captions else False
                     )
                 )
                 
@@ -801,8 +907,14 @@ if st.button("Generate Commentary"):
                 # Display success message
                 st.success(f"Processing completed successfully!")
                 
-                # Get the final video path
-                final_video_path = str(result)
+                # Get the results
+                if isinstance(result, dict):
+                    final_video_path = result["video_path"]
+                    captions_data = result.get("captions")
+                else:
+                    # Backward compatibility with older return format
+                    final_video_path = str(result)
+                    captions_data = None
                 
                 if os.path.exists(final_video_path):
                     # Create a download button for the video
@@ -850,8 +962,46 @@ if st.button("Generate Commentary"):
                     else:
                         st.error("No video files found in output directory")
                 
+                # Display captions if they were generated
+                if captions_data and generate_captions:
+                    st.markdown("---")
+                    st.subheader(f"Generated Caption for {platform_name}")
+                    
+                    # Create a container for the caption with styling
+                    st.markdown("<div style='background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0;'>", unsafe_allow_html=True)
+                    
+                    # Display the caption
+                    st.text_area("Caption", captions_data["caption"], height=150, key="video_caption_text")
+                    
+                    # Display hashtags if available
+                    if "hashtags" in captions_data and captions_data["hashtags"]:
+                        st.markdown("**Hashtags:**")
+                        hashtags_text = " ".join(captions_data["hashtags"])
+                        st.code(hashtags_text)
+                    
+                    # Display emojis if available
+                    if "emojis" in captions_data and captions_data["emojis"]:
+                        st.markdown("**Emojis used:**")
+                        emojis_text = " ".join(captions_data["emojis"])
+                        st.code(emojis_text)
+                    
+                    # JavaScript for copying to clipboard
+                    copy_button_html = f"""
+                    <button class="copy-btn" onclick="navigator.clipboard.writeText(`{captions_data['caption']}`)">
+                        Copy Caption to Clipboard
+                    </button>
+                    """
+                    st.markdown(copy_button_html, unsafe_allow_html=True)
+                    
+                    # Add info about the model used
+                    model_used = captions_data.get("model_used", "Unknown")
+                    st.markdown(f"<small>Generated using {model_used}</small>", unsafe_allow_html=True)
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+        
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
+            st.exception(e)
 
 # Add information about the pipeline
 with st.expander("About the Pipeline"):
@@ -866,6 +1016,20 @@ with st.expander("About the Pipeline"):
     4. **Generate Commentary**: Uses Qwen LLMs for English commentary and translates to other languages if needed
     5. **Generate Audio**: Uses Google TTS for speech synthesis with extensive voice options
     6. **Generate Video**: Combines the original video with the generated audio
+    
+    ### Caption Generation
+    
+    The caption generation feature uses AI to create engaging social media captions with:
+    
+    - Relevant hashtags based on video content
+    - Appropriate emojis that enhance the message
+    - Platform-specific formatting (Instagram, TikTok, Twitter)
+    - One-click copy functionality for easy sharing
+    - Support for multiple languages
+    
+    You can choose between two AI models for caption generation:
+    - **Qwen**: Faster processing, good for English captions
+    - **GPT-4o**: Higher quality, better for non-English languages and more creative captions
     
     ### Features
     

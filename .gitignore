@@ -55,4 +55,17 @@ Thumbs.db
 .streamlit/secrets.toml
 
 # Don't ignore sample videos for demo purposes
-!sample_generated_videos/*.mp4 
+!sample_generated_videos/*.mp4
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+
+# Environment variables and credentials
+.env
+set_env.ps1
+
+# OS-specific files
+.DS_Store
+Thumbs.db 
