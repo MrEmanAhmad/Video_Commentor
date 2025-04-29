@@ -9,6 +9,33 @@ import glob
 import json
 import logging
 
+# Create necessary directories at startup
+os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output'), exist_ok=True)
+os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp'), exist_ok=True)
+os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib'), exist_ok=True)
+
+# Setup environment for Railway
+if os.environ.get('RAILWAY_PROJECT_ID'):
+    print("Running on Railway, setting up environment...")
+    
+    # Handle Google credentials from environment variable
+    google_creds_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    if google_creds_json:
+        try:
+            creds_dict = json.loads(google_creds_json)
+            creds_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'google_credentials.json')
+            with open(creds_file, 'w') as f:
+                json.dump(creds_dict, f, indent=2)
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_file
+            print(f"Google credentials written to {creds_file}")
+        except Exception as e:
+            print(f"Error setting up Google credentials: {str(e)}")
+            
+    # Add current directory to path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.append(current_dir)
+
 # === FIX FOR OPENCV LIBRARY PATHS ===
 # Set LD_LIBRARY_PATH for OpenCV before any imports
 def setup_opencv_libraries():
@@ -26,12 +53,38 @@ def setup_opencv_libraries():
             
     # On Railway/Linux, make sure Nix libraries are in LD_LIBRARY_PATH
     if os.name != 'nt':  # Not Windows
+        print("Running on Linux, setting up library paths for OpenCV...")
+        
+        # Check for existing libGL.so.1
+        try:
+            result = subprocess.run(['find', '/', '-name', 'libGL.so.1', '-type', 'f'], 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            found_paths = result.stdout.strip().split('\n')
+            if found_paths and found_paths[0]:
+                print(f"Found libGL.so.1 at: {found_paths}")
+                # Add these directories to library path
+                lib_dirs = [os.path.dirname(path) for path in found_paths if path]
+                for lib_dir in lib_dirs:
+                    if lib_dir not in current_path:
+                        current_path = f"{current_path}:{lib_dir}" if current_path else lib_dir
+            else:
+                print("Warning: libGL.so.1 not found on system")
+        except Exception as e:
+            print(f"Error finding libGL.so.1: {str(e)}")
+        
         # Common library paths in Nix
         lib_paths = [
             "/nix/store/*/lib",
+            "/nix/store/*/mesa*/lib",
+            "/nix/store/*/libglvnd*/lib",
+            "/nix/store/*/libGL*/lib",
+            "/nix/store/*/mesa*/*-drivers*/lib",
             "/nix/var/nix/profiles/default/lib",
             "/usr/lib",
-            "/usr/lib/x86_64-linux-gnu"
+            "/usr/lib/x86_64-linux-gnu",
+            "/nix/store/v82vp13jf8lxaljmlar0qpl2z9pfsypi-mesa-24.2.5/lib",
+            "/nix/store/lfxm7l9sgp6cxnl16pqglgl9mwhmb8xk-mesa-24.2.5-drivers/lib",
+            "/nix/store/hinb0m8if8ic0dgm4h6dr2x3yk1f0qcr-libglvnd-1.7.0/lib"
         ]
         
         # Expand glob patterns to find all matching directories
@@ -53,6 +106,63 @@ def setup_opencv_libraries():
             
             os.environ['LD_LIBRARY_PATH'] = full_path
             print(f"LD_LIBRARY_PATH set to: {full_path}")
+
+        # Attempt to set LD_PRELOAD for libGL if needed
+        try:
+            # Look for libGL in the expanded paths
+            for path in expanded_paths:
+                libgl_path = os.path.join(path, 'libGL.so.1')
+                if os.path.exists(libgl_path):
+                    os.environ['LD_PRELOAD'] = libgl_path
+                    print(f"LD_PRELOAD set to: {libgl_path}")
+                    break
+        except Exception as e:
+            print(f"Error setting LD_PRELOAD: {str(e)}")
+    else:
+        # Windows-specific OpenCV library path handling
+        print("Running on Windows, setting up library paths for OpenCV...")
+        try:
+            # Check if OpenCV is installed via pip or conda
+            import importlib.util
+            cv2_spec = importlib.util.find_spec("cv2")
+            if cv2_spec:
+                cv2_path = os.path.dirname(cv2_spec.origin)
+                print(f"Found OpenCV at: {cv2_path}")
+                
+                # Find potential directories containing DLL files
+                opencv_root = os.path.dirname(cv2_path)
+                potential_lib_dirs = [
+                    os.path.join(opencv_root, 'lib'),
+                    os.path.join(opencv_root, 'Library', 'bin'),  # Conda path
+                    os.path.join(opencv_root, 'Library', 'lib'),  # Conda path
+                    cv2_path,  # Direct module directory
+                ]
+                
+                # Add these directories to PATH environment variable
+                for lib_dir in potential_lib_dirs:
+                    if os.path.exists(lib_dir) and lib_dir not in os.environ.get('PATH', ''):
+                        os.environ['PATH'] = f"{lib_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+                        print(f"Added to PATH: {lib_dir}")
+                
+                # Check for common OpenCV DLLs to verify successful setup
+                opencv_dlls = ['opencv_world*.dll', 'libopencv_world*.dll']
+                dll_found = False
+                for lib_dir in potential_lib_dirs:
+                    if os.path.exists(lib_dir):
+                        for dll_pattern in opencv_dlls:
+                            dll_matches = glob.glob(os.path.join(lib_dir, dll_pattern))
+                            if dll_matches:
+                                dll_found = True
+                                print(f"Found OpenCV DLLs: {dll_matches}")
+                                break
+                
+                if not dll_found:
+                    print("Warning: No OpenCV DLLs found in the expected locations")
+            else:
+                print("Warning: OpenCV module not found")
+                
+        except Exception as e:
+            print(f"Error setting up Windows OpenCV paths: {str(e)}")
 
 # Run the library path setup before any imports
 setup_opencv_libraries()

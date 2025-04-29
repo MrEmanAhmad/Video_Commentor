@@ -32,8 +32,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
+# Create needed directories
+RUN mkdir -p /app/output /app/tmp /app/lib
+
 # Expose the port the app runs on
 EXPOSE 8080
 
 # Command to run the application
-CMD ["python", "railway_deployment.py"] 
+CMD ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8080", "--server.enableCORS=false"] 
